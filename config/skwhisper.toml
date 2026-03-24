@@ -1,0 +1,36 @@
+# SKWhisper Configuration
+
+[paths]
+sessions_dir = "~/.openclaw/agents/lumina/sessions"
+memory_dir = "~/.skcapstone/agents/lumina/memory"
+state_dir = "~/.skcapstone/agents/lumina/skwhisper"
+
+[ollama]
+base_url = "http://192.168.0.100:11434"
+embed_model = "mxbai-embed-large"
+summarize_model = "llama3.2:3b"
+
+[qdrant]
+url = "https://skvector.skstack01.douno.it"
+api_key = "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ"
+collection = "lumina-memory"
+
+[watcher]
+# How often to check for new session content (seconds)
+poll_interval_seconds = 60
+# Session must be idle this long before digestion (seconds)
+idle_threshold_seconds = 300
+# Minimum messages in a session before we bother digesting
+min_messages_to_digest = 5
+
+[curator]
+# How often to regenerate whisper context (seconds)
+curate_interval_seconds = 1800
+# Number of similar memories to surface
+top_k_memories = 10
+# Max tokens in whisper context file
+max_whisper_tokens = 2000
+
+[patterns]
+top_n_topics = 20
+decay_days = 30

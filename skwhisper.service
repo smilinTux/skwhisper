@@ -1,0 +1,18 @@
+[Unit]
+Description=SKWhisper — Lumina's Subconscious Memory Layer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m skwhisper daemon
+WorkingDirectory=/home/cbrd21/clawd/projects/skwhisper
+Environment=PYTHONPATH=/home/cbrd21/clawd/projects/skwhisper
+Restart=on-failure
+RestartSec=30
+
+# Logging
+StandardOutput=append:/home/cbrd21/.skcapstone/agents/lumina/skwhisper/daemon.log
+StandardError=append:/home/cbrd21/.skcapstone/agents/lumina/skwhisper/daemon.log
+
+[Install]
+WantedBy=default.target
