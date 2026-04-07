@@ -246,7 +246,7 @@ def cmd_status(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="skwhisper",
-        description="SKWhisper — Lumina's subconscious memory layer",
+        description="SKWhisper — multi-agent subconscious memory layer",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("-c", "--config", default=None, help="Path to skwhisper.toml")

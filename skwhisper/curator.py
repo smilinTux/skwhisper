@@ -129,7 +129,7 @@ def _get_recent_context(config: Config) -> str:
     for path in selected:
         messages, _ = extract_messages(path, 0)
         for msg in messages[-20:]:  # Last 20 messages per session
-            role = "Chef" if msg["role"] == "user" else "Lumina"
+            role = config.user_label if msg["role"] == "user" else config.agent_label
             all_text.append(f"{role}: {msg['text'][:500]}")
 
     return "\n".join(all_text)[:8000]

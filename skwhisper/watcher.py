@@ -248,12 +248,12 @@ def scan_sessions(config: Config) -> list[dict]:
     return results
 
 
-def format_messages_for_summary(messages: list[dict], max_chars: int = 15000) -> str:
+def format_messages_for_summary(messages: list[dict], max_chars: int = 15000, user_label: str = "User", agent_label: str = "Agent") -> str:
     """Format extracted messages into a text block for summarization."""
     lines = []
     total = 0
     for msg in messages:
-        role = "Chef" if msg["role"] == "user" else "Lumina"
+        role = user_label if msg["role"] == "user" else agent_label
         line = f"{role}: {msg['text']}"
         if total + len(line) > max_chars:
             lines.append(f"[...{len(messages) - len(lines)} more messages truncated...]")

@@ -34,7 +34,7 @@ async def digest_session(
         log.debug("Session %s classified as: %s", session_id[:12], session_type)
 
         # 2. Format messages for summarization
-        text = format_messages_for_summary(messages)
+        text = format_messages_for_summary(messages, user_label=config.user_label, agent_label=config.agent_label)
 
         # 3. Summarize via ollama
         summary = await ollama.summarize(text)

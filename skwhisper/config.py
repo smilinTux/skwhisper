@@ -12,11 +12,13 @@ DEFAULTS = {
     "memory_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "memory",
     "state_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "skwhisper",
     "ollama_url": "http://localhost:11434",
-    "embed_model": "mxbai-embed-large",
+    "embed_model": "bge-large",
     "summarize_model": "llama3.2:3b",
     "qdrant_url": "https://skvector.skstack01.douno.it",
     "qdrant_api_key": "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ",
-    "qdrant_collection": "lumina-memory",
+    "qdrant_collection": f"{_AGENT}-memory",
+    "user_label": "User",
+    "agent_label": _AGENT.capitalize(),
     "poll_interval": 60,
     "idle_threshold": 300,
     "min_messages": 5,
@@ -72,9 +74,9 @@ def get_config(path: str | Path | None = None) -> Config:
     if _config is None:
         # Search order: explicit path > XDG config > skcapstone config > legacy
         candidates = [
+            Path.home() / ".skcapstone" / "agents" / _AGENT / "config" / "skwhisper.toml",
             Path.home() / ".config" / "skwhisper" / "skwhisper.toml",
             Path.home() / ".skcapstone" / "config" / "skwhisper.toml",
-            Path.home() / "clawd" / "projects" / "skwhisper" / "config" / "skwhisper.toml",
         ]
         if path:
             default_path = Path(path)
