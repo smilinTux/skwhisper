@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skwhisper"
+version = "0.1.0"
+description = "SKWhisper — Lumina's subconscious memory layer: digests Claude sessions, surfaces patterns, and writes whisper context"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "smilinTux", email = "smilinTux@users.noreply.github.com" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "skmemory",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "black",
+]
+
+[project.scripts]
+skwhisper = "skwhisper.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["skwhisper*"]
