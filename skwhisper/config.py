@@ -17,7 +17,7 @@ DEFAULTS = {
     "qdrant_url": "https://skvector.skstack01.douno.it",
     "qdrant_api_key": "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ",
     "qdrant_collection": f"{_AGENT}-memory",
-    "user_label": "User",
+    "user_label": "Casey",
     "agent_label": _AGENT.capitalize(),
     "poll_interval": 60,
     "idle_threshold": 300,
