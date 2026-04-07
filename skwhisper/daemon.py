@@ -80,25 +80,25 @@ async def digest_session(
             intensity=6.0,
         )
 
-        # 9. Embed and upsert to Qdrant
-        # mxbai-embed-large has ~512 token limit; embed first 800 chars of summary
-        vector = await ollama.embed(summary[:800])
-        await qdrant.upsert(
-            vector=vector,
-            payload={
-                "title": title,
-                "content": content[:2000],
-                "tier": "short-term",
-                "tags": tags,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "intensity": 6.0,
-                "emotions": ", ".join(emotions),
-                "source": "skwhisper",
-                "session_id": session_id,
-                "session_type": session_type,
-            },
-            point_id=mem_id,
-        )
+        # 9. Embed and upsert to Qdrant (optional — skip if not configured)
+        if qdrant.url:
+            vector = await ollama.embed(summary[:800])
+            await qdrant.upsert(
+                vector=vector,
+                payload={
+                    "title": title,
+                    "content": content[:2000],
+                    "tier": "short-term",
+                    "tags": tags,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "intensity": 6.0,
+                    "emotions": ", ".join(emotions),
+                    "source": "skwhisper",
+                    "session_id": session_id,
+                    "session_type": session_type,
+                },
+                point_id=mem_id,
+            )
 
         # 10. Update patterns (pass session type so topics can be split by origin)
         update_patterns(config.state_dir, session_id, extracted, session_type=session_type)

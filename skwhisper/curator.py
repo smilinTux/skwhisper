@@ -36,10 +36,14 @@ async def curate_context(config: Config) -> str:
         log.info("Embedding recent context (%d chars)...", len(embed_text))
         vector = await ollama.embed(embed_text)
 
-        # 3. Search Qdrant for semantically similar memories
-        log.info("Searching skvector for relevant memories...")
-        results = await qdrant.search(vector, top_k=config.top_k, score_threshold=0.5)
-        log.info("Found %d relevant memories", len(results))
+        # 3. Search Qdrant for semantically similar memories (optional)
+        results = []
+        if config.qdrant_url:
+            log.info("Searching skvector for relevant memories...")
+            results = await qdrant.search(vector, top_k=config.top_k, score_threshold=0.5)
+            log.info("Found %d relevant memories", len(results))
+        else:
+            log.info("Qdrant not configured, skipping semantic search")
 
         # 4. Get pattern data
         hot_topics = get_hot_topics(config.state_dir, top_n=10)

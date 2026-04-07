@@ -36,6 +36,9 @@ class QdrantClient:
         point_id: str | None = None,
     ) -> bool:
         """Upsert a single point."""
+        if not self.url:
+            log.debug("Qdrant not configured, skipping upsert")
+            return True
         client = await self._get_client()
         pid = point_id or str(uuid.uuid5(uuid.NAMESPACE_URL, payload.get("content", str(uuid.uuid4()))))
 
@@ -66,6 +69,9 @@ class QdrantClient:
         score_threshold: float = 0.5,
     ) -> list[dict]:
         """Search for similar vectors."""
+        if not self.url:
+            log.debug("Qdrant not configured, skipping search")
+            return []
         client = await self._get_client()
         body = {
             "vector": vector,
