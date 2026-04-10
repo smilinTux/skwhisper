@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skwhisper"
-version = "0.1.0"
-description = "SKWhisper — Lumina's subconscious memory layer: digests Claude sessions, surfaces patterns, and writes whisper context"
+version = "0.3.0"
+description = "SKWhisper — multi-agent subconscious memory layer: digests Claude sessions, surfaces patterns, and writes whisper context"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [

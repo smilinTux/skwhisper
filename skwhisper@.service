@@ -1,0 +1,20 @@
+[Unit]
+Description=SKWhisper — %i agent subconscious memory layer
+After=network.target
+
+[Service]
+Type=simple
+# %i = agent name (e.g. jarvis, aster, lumina)
+# %h = user home directory (resolved by systemd)
+ExecStart=%h/.local/bin/skwhisper daemon
+Environment=SKCAPSTONE_AGENT=%i
+Environment=HOME=%h
+Restart=on-failure
+RestartSec=30
+
+# Per-agent log file
+StandardOutput=append:%h/.skcapstone/agents/%i/skwhisper/daemon.log
+StandardError=append:%h/.skcapstone/agents/%i/skwhisper/daemon.log
+
+[Install]
+WantedBy=default.target

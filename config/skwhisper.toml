@@ -1,36 +1,57 @@
-# SKWhisper Configuration
+# SKWhisper Configuration Template
+#
+# AGENT RESOLUTION ORDER:
+#   1. $SKCAPSTONE_AGENT env var (set by systemd service or shell)
+#   2. Default: "lumina"
+#
+# Per-agent config is loaded from:
+#   ~/.skcapstone/agents/<agent>/config/skwhisper.toml
+#
+# Copy this file to that location and fill in your values.
 
 [paths]
-sessions_dir = "~/.openclaw/agents/lumina/sessions"
-memory_dir = "~/.skcapstone/agents/lumina/memory"
-state_dir = "~/.skcapstone/agents/lumina/skwhisper"
+# Sessions directory — where Claude Code / OpenClaw writes .jsonl transcripts
+sessions_dir = "~/.skcapstone/agents/<agent>/sessions"
+
+# Memory directory — skmemory short/mid/long-term JSON files
+memory_dir = "~/.skcapstone/agents/<agent>/memory"
+
+# State directory — state.json, whisper.md, patterns.json, daemon.log
+state_dir = "~/.skcapstone/agents/<agent>/skwhisper"
+
+[agent]
+# Labels used when formatting conversation transcripts for Ollama
+user_label = "Casey"
+agent_label = "<Agent>"  # e.g. Jarvis, Aster, Lumina
 
 [ollama]
-base_url = "http://192.168.0.100:11434"
-embed_model = "mxbai-embed-large"
-summarize_model = "llama3.2:3b"
+# Ollama endpoint — local or remote
+ollama_url = "http://localhost:11434"
+embed_model = "bge-large"           # Embedding model (1024d)
+summarize_model = "llama3.2"        # Summarization model (CPU); use qwen2.5:7b for GPU
 
 [qdrant]
-url = "https://skvector.skstack01.douno.it"
-api_key = "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ"
-collection = "lumina-memory"
+# Optional — set qdrant_url = "" to disable vector search
+qdrant_url = "https://skvector.example.com"
+qdrant_api_key = "CHANGE_ME"
+qdrant_collection = "<agent>-memory"  # e.g. jarvis-memory
 
 [watcher]
-# How often to check for new session content (seconds)
-poll_interval_seconds = 60
+# How often to scan for new session content (seconds)
+poll_interval = 60
+
 # Session must be idle this long before digestion (seconds)
-idle_threshold_seconds = 300
-# Minimum messages in a session before we bother digesting
-min_messages_to_digest = 5
+idle_threshold = 300
+
+# Minimum messages in a session before digesting
+min_messages = 5
 
 [curator]
 # How often to regenerate whisper context (seconds)
-curate_interval_seconds = 1800
-# Number of similar memories to surface
-top_k_memories = 10
-# Max tokens in whisper context file
-max_whisper_tokens = 2000
+curate_interval = 1800
 
-[patterns]
-top_n_topics = 20
-decay_days = 30
+# Number of similar memories to surface from vector search
+top_k = 10
+
+# Max characters in whisper context file
+max_whisper_tokens = 2000

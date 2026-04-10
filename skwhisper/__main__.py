@@ -3,6 +3,8 @@
 import argparse
 import asyncio
 import logging
+import os
+import subprocess
 import sys
 import json
 from pathlib import Path
@@ -96,11 +98,13 @@ def cmd_patterns(args):
 
 
 def _check_daemon_health() -> str:
-    """Check if the skwhisper systemd user service is active."""
+    """Check if the skwhisper@<agent> systemd user service is active."""
     import subprocess
+    agent = os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    service = f"skwhisper@{agent}"
     try:
         result = subprocess.run(
-            ["systemctl", "--user", "is-active", "skwhisper"],
+            ["systemctl", "--user", "is-active", service],
             capture_output=True, text=True, timeout=5,
         )
         status = result.stdout.strip()
@@ -243,6 +247,64 @@ def cmd_status(args):
     print(f"Patterns updated:    {patterns.get('updated_at', 'never')}")
 
 
+def cmd_install(args):
+    """Install the systemd user service template and enable it for an agent."""
+    agent = getattr(args, "agent", None) or os.environ.get("SKCAPSTONE_AGENT", "lumina")
+    home = Path.home()
+    service_dir = home / ".config" / "systemd" / "user"
+    service_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find the skwhisper binary
+    skwhisper_bin = Path(sys.argv[0]).resolve()
+
+    # Write the template service file
+    template_path = service_dir / "skwhisper@.service"
+    template_content = f"""\
+[Unit]
+Description=SKWhisper — %i agent subconscious memory layer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={skwhisper_bin} daemon
+Environment=SKCAPSTONE_AGENT=%i
+Environment=HOME={home}
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:{home}/.skcapstone/agents/%i/skwhisper/daemon.log
+StandardError=append:{home}/.skcapstone/agents/%i/skwhisper/daemon.log
+
+[Install]
+WantedBy=default.target
+"""
+    template_path.write_text(template_content)
+    print(f"→ Wrote service template: {template_path}")
+
+    # Ensure agent state dir exists
+    state_dir = home / ".skcapstone" / "agents" / agent / "skwhisper"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    sessions_dir = home / ".skcapstone" / "agents" / agent / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    print(f"→ Ensured state/sessions dirs for agent '{agent}'")
+
+    # Reload systemd and enable the instance
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", f"skwhisper@{agent}"], check=True)
+    print(f"→ Enabled skwhisper@{agent}")
+
+    if getattr(args, "start", False):
+        subprocess.run(["systemctl", "--user", "start", f"skwhisper@{agent}"], check=True)
+        print(f"→ Started skwhisper@{agent}")
+    else:
+        print(f"\nRun to start:")
+        print(f"  systemctl --user start skwhisper@{agent}")
+
+    print(f"\nLogs:")
+    print(f"  tail -f {state_dir}/daemon.log")
+    print(f"\nStatus:")
+    print(f"  SKCAPSTONE_AGENT={agent} skwhisper status")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="skwhisper",
@@ -273,6 +335,10 @@ def main():
 
     sub.add_parser("status", help="Show daemon status")
 
+    install_p = sub.add_parser("install", help="Install and enable the systemd user service for an agent")
+    install_p.add_argument("--agent", default=None, help="Agent name (default: $SKCAPSTONE_AGENT or 'lumina')")
+    install_p.add_argument("--start", action="store_true", help="Start the service after installing")
+
     args = parser.parse_args()
     setup_logging(args.verbose)
 
@@ -282,6 +348,7 @@ def main():
         "curate": cmd_curate,
         "patterns": cmd_patterns,
         "status": cmd_status,
+        "install": cmd_install,
     }
 
     if args.command in commands:
