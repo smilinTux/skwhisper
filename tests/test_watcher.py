@@ -103,8 +103,8 @@ def test_config():
     from skwhisper.config import Config
 
     config = Config()  # No TOML, use defaults
-    assert config.ollama_url == "http://192.168.0.100:11434"
-    assert config.qdrant_collection == "lumina-memory"
+    assert config.ollama_url == "http://localhost:11434"
+    assert config.qdrant_collection == f"{config.agent_label.lower()}-memory"
     assert config.min_messages == 5
     print("✓ config: OK")
     print(f"  State dir: {config.state_dir}")
