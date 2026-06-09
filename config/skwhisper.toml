@@ -23,9 +23,11 @@ embed_model = "mxbai-embed-large"
 # so it stays on the lightweight qwen3.5:4b for digest summarization (right tool for the job).
 summarize_model = "qwen3.5:4b"
 
+# [qdrant] RETIRED 2026-06-09 — vector store migrated to local Postgres+pgvector
+# (see clients/pgmem.py). Kept only as a dormant fallback; set via env if ever revived.
 [qdrant]
-url = "https://skvector.skstack01.douno.it"
-api_key = "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ"
+url = ""
+api_key = ""
 # collection is auto-derived as "{agent}-memory" — override here if needed:
 # collection = "lumina-memory"
 
