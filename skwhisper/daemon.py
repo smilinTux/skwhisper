@@ -10,7 +10,7 @@ from .watcher import scan_sessions, format_messages_for_summary, mark_digested, 
 from .curator import curate_context
 from .patterns import update_patterns
 from .clients.ollama import OllamaClient
-from .clients.qdrant import QdrantClient
+from .clients.pgmem import PGMemClient
 from .clients.skmemory import SKMemoryWriter
 from .clients.skgraph import SKGraphWriter
 
@@ -21,7 +21,7 @@ async def digest_session(
     config: Config,
     session: dict,
     ollama: OllamaClient,
-    qdrant: QdrantClient,
+    qdrant: PGMemClient,
     memory: SKMemoryWriter,
     graph: "SKGraphWriter | None" = None,
 ) -> bool:
@@ -90,7 +90,7 @@ async def digest_session(
 
         # 9. Embed and upsert to Qdrant
         # mxbai-embed-large has ~512 token limit; embed first 800 chars of summary
-        vector = await ollama.embed(summary[:800])
+        vector = await qdrant.embed(summary[:800])  # bge-legal-v2 (1024-dim), matches memories table
         await qdrant.upsert(
             vector=vector,
             payload={
@@ -141,7 +141,7 @@ async def digest_session(
 async def run_digest_cycle(config: Config) -> int:
     """Run one digest cycle. Returns number of sessions digested."""
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
-    qdrant = QdrantClient(config.qdrant_url, config.qdrant_api_key, config.qdrant_collection)
+    qdrant = PGMemClient(agent=getattr(config, "agent_name", None))
     memory = SKMemoryWriter(config.memory_dir)
     graph = SKGraphWriter.from_config(config)  # Returns None if FalkorDB unavailable
 
@@ -227,7 +227,7 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
     total_batches = (total + batch_size - 1) // batch_size
 
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
-    qdrant = QdrantClient(config.qdrant_url, config.qdrant_api_key, config.qdrant_collection)
+    qdrant = PGMemClient(agent=getattr(config, "agent_name", None))
     memory = SKMemoryWriter(config.memory_dir)
     graph = SKGraphWriter.from_config(config)
 

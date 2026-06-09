@@ -5,8 +5,7 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
-from .clients.ollama import OllamaClient
-from .clients.qdrant import QdrantClient
+from .clients.pgmem import PGMemClient
 from .patterns import load_patterns, get_hot_topics, get_repeated_questions
 from .watcher import extract_messages
 from .config import Config
@@ -20,8 +19,7 @@ async def curate_context(config: Config) -> str:
     and semantic memory search.
     Returns the whisper content as a string.
     """
-    ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
-    qdrant = QdrantClient(config.qdrant_url, config.qdrant_api_key, config.qdrant_collection)
+    pgmem = PGMemClient(agent=getattr(config, "agent_name", None))
 
     try:
         # 1. Gather recent conversation context
@@ -30,15 +28,14 @@ async def curate_context(config: Config) -> str:
             log.info("No recent conversation context found")
             return _build_whisper(config, [], [], [], [])
 
-        # 2. Generate embedding of recent context
-        # mxbai-embed-large has ~512 token limit (~1000 chars); truncate safely
-        embed_text = recent_text[:800]
+        # 2. Generate embedding of recent context (bge-legal-v2, 1024-dim)
+        embed_text = recent_text[:1500]
         log.info("Embedding recent context (%d chars)...", len(embed_text))
-        vector = await ollama.embed(embed_text)
+        vector = await pgmem.embed(embed_text)
 
-        # 3. Search Qdrant for semantically similar memories
-        log.info("Searching skvector for relevant memories...")
-        results = await qdrant.search(vector, top_k=config.top_k, score_threshold=0.5)
+        # 3. Hybrid (vector + BM25 RRF) search over local pg memories
+        log.info("Searching local pg (hybrid vec+BM25) for relevant memories...")
+        results = await pgmem.search(embed_text, vector, top_k=config.top_k)
         log.info("Found %d relevant memories", len(results))
 
         # 4. Get pattern data
@@ -56,8 +53,7 @@ async def curate_context(config: Config) -> str:
         return whisper
 
     finally:
-        await ollama.close()
-        await qdrant.close()
+        await pgmem.close()
 
 
 def _is_cron_session(path: Path) -> bool:

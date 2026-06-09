@@ -18,7 +18,10 @@
 [ollama]
 base_url = "http://192.168.0.100:11434"
 embed_model = "mxbai-embed-large"
-summarize_model = "llama3.2:3b"
+# 2026-06-08: llama3.2:3b removed from .100 Ollama → switched to qwen3.5:4b (present).
+# Note: new qwen3.6-27b-abliterated is OpenAI-API only (:8082); skwhisper is Ollama-API,
+# so it stays on the lightweight qwen3.5:4b for digest summarization (right tool for the job).
+summarize_model = "qwen3.5:4b"
 
 [qdrant]
 url = "https://skvector.skstack01.douno.it"
