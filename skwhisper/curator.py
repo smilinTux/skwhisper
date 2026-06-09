@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
-from .clients.pgmem import PGMemClient
+from .clients.factory import make_vector_client
 from .patterns import load_patterns, get_hot_topics, get_repeated_questions
 from .watcher import extract_messages
 from .config import Config
@@ -19,7 +19,7 @@ async def curate_context(config: Config) -> str:
     and semantic memory search.
     Returns the whisper content as a string.
     """
-    pgmem = PGMemClient(agent=getattr(config, "agent_name", None))
+    pgmem = make_vector_client(config)
 
     try:
         # 1. Gather recent conversation context

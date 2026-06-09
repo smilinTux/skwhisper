@@ -10,9 +10,8 @@ from .watcher import scan_sessions, format_messages_for_summary, mark_digested, 
 from .curator import curate_context
 from .patterns import update_patterns
 from .clients.ollama import OllamaClient
-from .clients.pgmem import PGMemClient
+from .clients.factory import make_vector_client, make_graph_writer
 from .clients.skmemory import SKMemoryWriter
-from .clients.skgraph import SKGraphWriter
 
 log = logging.getLogger("skwhisper")
 
@@ -21,9 +20,9 @@ async def digest_session(
     config: Config,
     session: dict,
     ollama: OllamaClient,
-    qdrant: PGMemClient,
+    qdrant,
     memory: SKMemoryWriter,
-    graph: "SKGraphWriter | None" = None,
+    graph=None,
 ) -> bool:
     """Digest a single session: summarize, extract, store, embed."""
     session_id = session["session_id"]
@@ -140,9 +139,9 @@ async def digest_session(
 async def run_digest_cycle(config: Config) -> int:
     """Run one digest cycle. Returns number of sessions digested."""
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
-    qdrant = PGMemClient(agent=getattr(config, "agent_name", None))
+    qdrant = make_vector_client(config)
     memory = SKMemoryWriter(config.memory_dir)
-    graph = SKGraphWriter.from_config(config)  # Returns None if FalkorDB unavailable
+    graph = make_graph_writer(config)  # AGE (default) / FalkorDB / None per config
 
     try:
         sessions = scan_sessions(config)
@@ -167,6 +166,11 @@ async def run_digest_cycle(config: Config) -> int:
     finally:
         await ollama.close()
         await qdrant.close()
+        if graph is not None and hasattr(graph, "close"):
+            try:
+                graph.close()
+            except Exception:
+                pass
 
 
 async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
@@ -226,9 +230,9 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
     total_batches = (total + batch_size - 1) // batch_size
 
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
-    qdrant = PGMemClient(agent=getattr(config, "agent_name", None))
+    qdrant = make_vector_client(config)
     memory = SKMemoryWriter(config.memory_dir)
-    graph = SKGraphWriter.from_config(config)
+    graph = make_graph_writer(config)
 
     digested = 0
     try:
@@ -250,6 +254,11 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
     finally:
         await ollama.close()
         await qdrant.close()
+        if graph is not None and hasattr(graph, "close"):
+            try:
+                graph.close()
+            except Exception:
+                pass
 
     print(f"\nBacklog complete: {digested}/{total} sessions digested.")
     return digested

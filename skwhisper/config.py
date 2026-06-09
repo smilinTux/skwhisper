@@ -21,9 +21,14 @@ DEFAULTS = {
     "ollama_url": "http://192.168.0.100:11434",
     "embed_model": "mxbai-embed-large",
     "summarize_model": "llama3.2:3b",
+    # Vector backend selection: "pgvector" (default) | "qdrant" | "chromadb"
+    "vector_backend": os.environ.get("SKMEMORY_VECTOR_BACKEND", "pgvector"),
     "qdrant_url": os.environ.get("SKVECTOR_URL", ""),
     "qdrant_api_key": os.environ.get("SKVECTOR_API_KEY", ""),
     "qdrant_collection": f"{_AGENT}-memory",
+    # Graph backend selection: "age" (Postgres/Apache AGE, default) | "falkordb" | "none"
+    "graph_backend": os.environ.get("SKMEMORY_GRAPH_BACKEND", "age"),
+    "pg_dsn": os.environ.get("SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory"),
     "falkordb_host": "192.168.0.59",
     "falkordb_port": 16379,
     "falkordb_graph": f"{_AGENT}_knowledge",

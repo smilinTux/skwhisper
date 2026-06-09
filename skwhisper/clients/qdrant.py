@@ -1,11 +1,20 @@
-"""Qdrant vector DB client using httpx (no qdrant_client dependency)."""
+"""Qdrant vector DB client using httpx (no qdrant_client dependency).
 
+Conforms to the shared vector-client interface (embed/search/upsert/close) so it
+is interchangeable with PGMemClient and ChromaClient via clients/factory.py.
+Embeddings come from the shared embed server (bge-legal-v2 by default).
+"""
+
+import os
 import httpx
 import uuid
 import logging
 from datetime import datetime, timezone
 
 log = logging.getLogger("skwhisper.qdrant")
+
+_EMBED_URL = os.environ.get("SKMEMORY_EMBED_URL", "http://192.168.0.100:11435/api/embed")
+_EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "bge-legal-v2")
 
 
 class QdrantClient:
@@ -28,6 +37,21 @@ class QdrantClient:
                 headers=self.headers,
             )
         return self._client
+
+    async def embed(self, text: str) -> list[float]:
+        """Embed via the shared bge-legal-v2 server (Ollama /api/embed shape)."""
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            resp = await c.post(_EMBED_URL, json={"model": _EMBED_MODEL, "input": text})
+            resp.raise_for_status()
+            data = resp.json()
+            embs = data.get("embeddings")
+            if embs:
+                return embs[0]
+            if data.get("embedding"):
+                return data["embedding"]
+            if data.get("data"):
+                return data["data"][0]["embedding"]
+            raise ValueError(f"no embedding in response: {list(data.keys())}")
 
     async def upsert(
         self,
@@ -64,17 +88,18 @@ class QdrantClient:
 
     async def search(
         self,
-        vector: list[float],
+        q_text: str,
+        q_vec: list[float],
         top_k: int = 10,
         score_threshold: float = 0.5,
     ) -> list[dict]:
-        """Search for similar vectors."""
+        """Vector search (q_text accepted for interface parity; Qdrant uses q_vec)."""
         if not self.url:
             log.debug("Qdrant not configured, skipping search")
             return []
         client = await self._get_client()
         body = {
-            "vector": vector,
+            "vector": q_vec,
             "limit": top_k,
             "score_threshold": score_threshold,
             "with_payload": True,
