@@ -2,7 +2,8 @@
 #
 # Agent-specific paths are resolved at runtime from SKAGENT (or SKCAPSTONE_AGENT).
 # You do NOT need to edit this file per-agent — just set SKAGENT before starting
-# the daemon (e.g. SKAGENT=jarvis skwhisper).
+# the daemon (e.g. SKAGENT=jarvis skwhisper). Per-agent overrides may live at
+#   ~/.skcapstone/agents/<agent>/config/skwhisper.toml
 #
 # Sovereign defaults (v0.4.0+):
 #   sessions_dir = ~/.skcapstone/agents/{agent}/sessions   (symlink your tool here)
@@ -10,47 +11,45 @@
 #   state_dir    = ~/.skcapstone/agents/{agent}/skwhisper
 
 [paths]
-# Uncomment to override agent-specific defaults:
+# Uncomment to override the agent-specific runtime defaults:
 # sessions_dir = "~/.skcapstone/agents/lumina/sessions"
 # memory_dir   = "~/.skcapstone/agents/lumina/memory"
 # state_dir    = "~/.skcapstone/agents/lumina/skwhisper"
 
+[agent]
+# Labels used when formatting conversation transcripts for the summarizer.
+user_label = "Casey"
+agent_label = "Lumina"   # e.g. Jarvis, Aster, Lumina
+
 [ollama]
-base_url = "http://192.168.0.100:11434"
-embed_model = "mxbai-embed-large"
-# 2026-06-08: llama3.2:3b removed from .100 Ollama → switched to qwen3.5:4b (present).
-# Note: new qwen3.6-27b-abliterated is OpenAI-API only (:8082); skwhisper is Ollama-API,
-# so it stays on the lightweight qwen3.5:4b for digest summarization (right tool for the job).
+ollama_url = "http://192.168.0.100:11434"
+embed_model = "mxbai-embed-large"   # (digest embeds now go via bge-legal-v2 in clients/pgmem.py)
+# llama3.2:3b was removed from the Ollama host → use qwen3.5:4b for digest summaries.
 summarize_model = "qwen3.5:4b"
 
-# [qdrant] RETIRED 2026-06-09 — vector store migrated to local Postgres+pgvector
-# (see clients/pgmem.py). Kept only as a dormant fallback; set via env if ever revived.
+# Vector/graph store = local Postgres + pgvector (see clients/pgmem.py).
+# The douno cluster (qdrant/skvector + FalkorDB/skgraph) is RETIRED — these blocks
+# are dormant fallbacks only; endpoints come from env (SKVECTOR_URL/SKVECTOR_API_KEY)
+# if ever revived.
 [qdrant]
 url = ""
 api_key = ""
-# collection is auto-derived as "{agent}-memory" — override here if needed:
-# collection = "lumina-memory"
+# collection is auto-derived as "{agent}-memory" — override here if needed.
 
 [falkordb]
-host = "192.168.0.59"
+host = ""
 port = 16379
-# graph is auto-derived as "{agent}_knowledge" — override here if needed:
-# graph = "lumina_knowledge"
+# graph is auto-derived as "{agent}_knowledge"; superseded by Apache AGE in the
+# local Postgres (graph: {agent}_knowledge).
 
 [watcher]
-# How often to check for new session content (seconds)
-poll_interval_seconds = 60
-# Session must be idle this long before digestion (seconds)
-idle_threshold_seconds = 300
-# Minimum messages in a session before we bother digesting
-min_messages_to_digest = 5
+poll_interval = 60
+idle_threshold = 300
+min_messages = 5
 
 [curator]
-# How often to regenerate whisper context (seconds)
-curate_interval_seconds = 1800
-# Number of similar memories to surface
-top_k_memories = 10
-# Max tokens in whisper context file
+curate_interval = 1800
+top_k = 10
 max_whisper_tokens = 2000
 
 [patterns]

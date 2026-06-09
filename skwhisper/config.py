@@ -11,6 +11,8 @@ _AGENT = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "lum
 # Defaults — all agent-specific paths use _AGENT.
 # Sessions live under the sovereign agent home; sources (Claude Code, Hermes,
 # OpenClaw, etc.) symlink or write into ~/.skcapstone/agents/{agent}/sessions/.
+# Vector store is local Postgres+pgvector (see clients/pgmem.py); qdrant/falkordb
+# are retired (douno cluster) and read from env only if ever revived.
 DEFAULTS = {
     "agent_name": _AGENT,
     "sessions_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "sessions",
@@ -25,6 +27,8 @@ DEFAULTS = {
     "falkordb_host": "192.168.0.59",
     "falkordb_port": 16379,
     "falkordb_graph": f"{_AGENT}_knowledge",
+    "user_label": "Casey",
+    "agent_label": _AGENT.capitalize(),
     "poll_interval": 60,
     "idle_threshold": 300,
     "min_messages": 5,
@@ -79,8 +83,17 @@ _config: Config | None = None
 def get_config(path: str | Path | None = None) -> Config:
     global _config
     if _config is None:
-        default_path = Path.home() / "clawd" / "projects" / "skwhisper" / "config" / "skwhisper.toml"
-        _config = Config(path or default_path)
+        # Search order: explicit path > XDG config > skcapstone config > legacy
+        candidates = [
+            Path.home() / ".skcapstone" / "agents" / _AGENT / "config" / "skwhisper.toml",
+            Path.home() / ".config" / "skwhisper" / "skwhisper.toml",
+            Path.home() / ".skcapstone" / "config" / "skwhisper.toml",
+        ]
+        if path:
+            default_path = Path(path)
+        else:
+            default_path = next((p for p in candidates if p.exists()), candidates[0])
+        _config = Config(default_path)
     return _config
 
 

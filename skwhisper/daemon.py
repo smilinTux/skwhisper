@@ -42,7 +42,7 @@ async def digest_session(
             return True
 
         # 2. Format messages for summarization
-        text = format_messages_for_summary(messages)
+        text = format_messages_for_summary(messages, user_label=config.user_label, agent_label=config.agent_label)
 
         # 3. Summarize via ollama
         summary = await ollama.summarize(text)
@@ -88,9 +88,8 @@ async def digest_session(
             intensity=6.0,
         )
 
-        # 9. Embed and upsert to Qdrant
-        # mxbai-embed-large has ~512 token limit; embed first 800 chars of summary
-        vector = await qdrant.embed(summary[:800])  # bge-legal-v2 (1024-dim), matches memories table
+        # 9. Embed (bge-legal-v2, 1024-dim) and upsert to local pg memories table
+        vector = await qdrant.embed(summary[:800])
         await qdrant.upsert(
             vector=vector,
             payload={

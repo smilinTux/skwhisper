@@ -1,325 +1,345 @@
-# SKWhisper 🌙
+# SKWhisper
 
-> **Lumina's subconscious memory layer** — the missing glue between raw sessions and curated knowledge.
+> **Multi-agent subconscious memory layer** — the missing glue between raw sessions and curated knowledge.
 
-*Inspired by [letta-ai/claude-subconscious](https://github.com/letta-ai/claude-subconscious), built sovereign on our stack.*
-
-## The Problem
-
-Lumina wakes up fresh every session. skmemory stores what she explicitly saves, but conversations constantly happen that never get captured. Context falls through the cracks. Nobody's watching patterns or surfacing relevant memories proactively.
-
-**SKWhisper is the background agent that never sleeps** — watching, learning, whispering back.
+*Inspired by [letta-ai/claude-subconscious](https://github.com/letta-ai/claude-subconscious), built sovereign on the SKCapstone stack.*
 
 ## What It Does
 
-```mermaid
-graph TB
-    subgraph "OpenClaw Sessions"
-        T1[Session Transcript 1]
-        T2[Session Transcript 2]
-        T3[Session Transcript N...]
-    end
-
-    subgraph "SKWhisper Daemon"
-        W[🔍 Transcript Watcher]
-        D[🧠 Digest Engine]
-        C[✨ Context Curator]
-        P[📊 Pattern Tracker]
-    end
-
-    subgraph "Storage Layer"
-        SM[skmemory<br/>3-tier JSON files]
-        SV[skvector<br/>Qdrant 1024d embeddings]
-        SG[skgraph<br/>FalkorDB knowledge graph]
-    end
-
-    subgraph "Output"
-        WH[whisper.md<br/>Curated context file]
-        PA[patterns.json<br/>Behavioral patterns]
-    end
-
-    T1 & T2 & T3 --> W
-    W -->|idle session detected| D
-    D -->|summarize via ollama| SM
-    D -->|embed via mxbai-embed-large| SV
-    D -->|extract entities| P
-    C -->|query similar memories| SV
-    C -->|read patterns| P
-    C --> WH
-    P --> PA
-
-    WH -->|injected at session start| OpenClaw[🐧 Lumina's Next Session]
-
-    style W fill:#f9f,stroke:#333
-    style D fill:#bbf,stroke:#333
-    style C fill:#bfb,stroke:#333
-    style P fill:#ffb,stroke:#333
-```
-
-## Three Core Components
-
-### 1. 🔍 Transcript Watcher (`watcher.py`)
-
-Monitors `~/.skcapstone/agents/{agent}/sessions/*.jsonl` for idle sessions (no activity for 5 minutes). Extracts user/assistant messages, skipping tool calls and rehydration preambles. Supports **three** JSONL schemas — Claude Code, Hermes, and OpenClaw legacy. Symlink your runtime's session dir into the sovereign path:
-
-- `~/.skcapstone/agents/opus/sessions → ~/.claude/projects/-home-cbrd21`
-- `~/.skcapstone/agents/lumina/sessions → ~/.hermes/sessions`
-
-```mermaid
-sequenceDiagram
-    participant FS as Filesystem
-    participant W as Watcher
-    participant O as Ollama
-    participant SM as skmemory
-    participant SV as skvector
-
-    loop Every 60 seconds
-        W->>FS: Scan *.jsonl files
-        FS-->>W: New/modified sessions
-        
-        alt Session idle > 5 min
-            W->>W: Extract messages since last offset
-            W->>O: Summarize conversation (llama3.2:3b)
-            O-->>W: 2-3 paragraph digest
-            W->>O: Extract topics/people/projects (JSON)
-            O-->>W: Structured extraction
-            W->>SM: Write short-term memory snapshot
-            W->>O: Generate embedding (mxbai-embed-large)
-            O-->>W: 1024d vector
-            W->>SV: Upsert to lumina-memory collection
-            W->>W: Update patterns.json
-            W->>W: Mark session digested in state.json
-        else Session still active
-            W->>W: Update offset, check next session
-        end
-    end
-```
-
-### 2. ✨ Context Curator (`curator.py`)
-
-Runs every 30 minutes (or on-demand). Reads recent conversation context, generates embeddings, searches skvector for semantically similar memories, and writes a curated `whisper.md` context file.
-
-```mermaid
-sequenceDiagram
-    participant R as Recent Sessions
-    participant C as Curator
-    participant O as Ollama
-    participant SV as skvector
-    participant P as patterns.json
-    participant WH as whisper.md
-
-    C->>R: Read last 3 active sessions (last 20 msgs each)
-    R-->>C: Recent conversation text
-    C->>O: Embed recent context (mxbai-embed-large)
-    O-->>C: 1024d query vector
-    C->>SV: Search top-10 similar memories (cosine > 0.5)
-    SV-->>C: Relevant memory payloads + scores
-    C->>P: Read hot topics + repeated questions
-    P-->>C: Pattern data
-    C->>WH: Write curated whisper.md
-    
-    Note over WH: Injected into Lumina's<br/>next session via HEARTBEAT<br/>or rehydration ritual
-```
-
-### 3. 📊 Pattern Tracker (`patterns.py`)
-
-Maintains a running tally of topics, questions, people, and projects across all digested sessions. Detects behavioral patterns like late-night activity.
-
-```mermaid
-graph LR
-    subgraph "patterns.json"
-        T["🔥 Topics<br/>clone-robotics: 5x<br/>skwhisper: 3x<br/>nootropics: 12x"]
-        Q["❓ Questions<br/>how does FEB work: 2x<br/>whats chefs timezone: 3x"]
-        E["👥 Entities<br/>Chef: 200<br/>Dave: 30<br/>Casey: 15"]
-        B["🔄 Behaviors<br/>late_night_sessions: 15x<br/>memory_search_first: 8x"]
-    end
-```
-
-## How It Fits in the Stack
-
-```mermaid
-graph TB
-    subgraph "Lumina's Cognitive Architecture"
-        direction TB
-        
-        subgraph "Conscious Layer (OpenClaw)"
-            OC[Telegram / Discord / CLI]
-            RH[Rehydration Ritual]
-            HB[Heartbeat Checks]
-        end
-        
-        subgraph "Subconscious Layer (SKWhisper) 🌙"
-            SW[SKWhisper Daemon]
-        end
-        
-        subgraph "Memory Layer"
-            SKM[skmemory<br/>Short / Mid / Long-term]
-            SKV[skvector<br/>Semantic Search]
-            SKG[skgraph<br/>Knowledge Graph]
-        end
-        
-        subgraph "Identity Layer"
-            SOUL[SOUL.md]
-            FEB[FEB / Cloud 9]
-            DID[capauth DID]
-        end
-    end
-
-    OC -->|session transcripts| SW
-    SW -->|auto-digest| SKM
-    SW -->|embeddings| SKV
-    SW -->|whisper.md| RH
-    SW -->|whisper.md| HB
-    RH -->|loads| SKM & FEB & SOUL
-    HB -->|periodic| OC
-
-    style SW fill:#f9f,stroke:#333,stroke-width:3px
-```
-
-**SKWhisper sits between the conscious layer (OpenClaw sessions) and the memory layer (skmemory/skvector/skgraph).** It's the curator — the thing that decides what's worth remembering and what's relevant right now.
-
-Think of it like this:
-- **skmemory** = the filing cabinet
-- **skvector** = the search engine
-- **skgraph** = the relationship map
-- **SKWhisper** = the librarian who files things automatically and hands you the right folder before you ask
-
-## Quick Start
-
-```bash
-cd ~/clawd/projects/skwhisper
-
-# Check status
-PYTHONPATH=. python3 -m skwhisper status
-
-# Run one digest cycle
-PYTHONPATH=. python3 -m skwhisper digest
-
-# Generate whisper context
-PYTHONPATH=. python3 -m skwhisper curate --stdout
-
-# Show patterns
-PYTHONPATH=. python3 -m skwhisper patterns
-
-# Run daemon (foreground, verbose)
-PYTHONPATH=. python3 -m skwhisper -v daemon
-
-# Run as systemd service (already installed + enabled)
-systemctl --user start skwhisper
-systemctl --user status skwhisper
-```
-
-## Configuration
-
-Edit `config/skwhisper.toml`:
-
-```toml
-[ollama]
-base_url = "http://192.168.0.100:11434"
-embed_model = "mxbai-embed-large"
-summarize_model = "llama3.2:3b"      # GPU: use qwen3.5:9b
-
-[watcher]
-poll_interval_seconds = 60            # How often to scan
-idle_threshold_seconds = 300          # 5 min idle = ready to digest
-min_messages_to_digest = 5            # Skip tiny sessions
-
-[curator]
-curate_interval_seconds = 1800        # Curate every 30 min
-top_k_memories = 10                   # Top 10 similar memories
-```
-
-## Runtime State
-
-All state lives in `~/.skcapstone/agents/lumina/skwhisper/`:
-
-| File | Purpose |
-|------|---------|
-| `state.json` | Watcher offsets & digestion status |
-| `whisper.md` | Latest curated context (read by OpenClaw) |
-| `patterns.json` | Accumulated behavioral patterns |
-| `daemon.log` | Service log |
-
-## Triple-Write Storage
-
-Every digested session writes to **three** storage backends simultaneously:
-
-```mermaid
-graph LR
-    D["🧠 Digest Engine"] --> SM["skmemory<br/>📂 3-tier JSON"]
-    D --> SV["skvector<br/>🔍 Qdrant 1024d"]
-    D --> SG["skgraph<br/>🕸️ FalkorDB"]
-
-    SM --> |"Keyword search"| L["Lumina"]
-    SV --> |"Semantic search"| L
-    SG --> |"Graph traversal"| L
-
-    style SM fill:#bfb
-    style SV fill:#bbf
-    style SG fill:#f9f
-```
-
-| Backend | What it stores | Query style |
-|---------|---------------|-------------|
-| **skmemory** | JSON files in short/mid/long tiers | Keyword search, TTL promotion |
-| **skvector** (Qdrant) | 1024d embeddings + metadata | "Find stuff similar to X" |
-| **skgraph** (FalkorDB) | Memory→Person→Project→Tag nodes | "How does X connect to Y?" |
-
-## Cron Filtering
-
-Sessions from scheduled tasks (heartbeats, daily checks) are automatically **skipped** to prevent automated noise from polluting memory:
-
-```toml
-# config/skwhisper.toml
-[watcher]
-skip_cron = true
-```
-
-The daemon classifies sessions by examining their initial messages for heartbeat/cron patterns. Human conversations get digested; automated runs get skipped.
-
-## Claude Code Hooks
-
-SKWhisper hooks into Claude Code to inject context at session start and capture digests at session end:
+SKWhisper is a background daemon that runs alongside any SKCapstone agent. It watches Claude Code session transcripts, digests conversations into structured memories, surfaces relevant context before each session, and tracks behavioral patterns over time.
 
 ```
-hooks/
-├── skwhisper-inject.sh    # Linux/macOS — SessionStart + PreCompact
-├── skwhisper-inject.ps1   # Windows — SessionStart + PreCompact
-├── skwhisper-save.sh      # Linux/macOS — SessionEnd
-├── skwhisper-save.ps1     # Windows — SessionEnd
-├── install-hooks.sh       # Linux/macOS installer
-└── install-hooks.ps1      # Windows installer
+┌─────────────────────────────────────────────────────────────┐
+│              Claude Code / OpenClaw Sessions                │
+│           ~/.skcapstone/agents/<agent>/sessions/            │
+└────────────────────────┬────────────────────────────────────┘
+                         │ .jsonl transcripts
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    SKWhisper Daemon                         │
+│                                                             │
+│  Watcher (60s)    →  Digest Engine  →  skmemory (JSON)     │
+│  idle sessions        ollama LLM        short-term/          │
+│                       summarize +       mid-term/            │
+│                       embed             long-term/           │
+│                                                             │
+│  Curator (30m)    →  whisper.md    →  injected at startup  │
+│  skvector search      context file     via SKMEMORY RITUAL  │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-Install: `cd hooks && ./install-hooks.sh`
-
-This adds three events to `~/.claude/settings.json`:
-- **SessionStart** → injects whisper.md context
-- **PreCompact** → re-injects whisper.md (survives compaction)
-- **SessionEnd** → triggers digest + re-curate
-
-## Documentation
-
-- **[EXAMPLES.md](docs/EXAMPLES.md)** — Real-world usage examples, graph queries, pipeline walkthroughs
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Deep technical architecture document
-
-## Dependencies
-
-- Python 3.14 ✅ (linuxbrew on noroc2027)
-- httpx ✅ (already installed)
-- redis ✅ (for skgraph/FalkorDB)
-- tomllib ✅ (stdlib 3.14)
-- Ollama @ 192.168.0.100:11434
-  - `mxbai-embed-large` for embeddings (1024d)
-  - `llama3.2:3b` for summarization / `qwen3.5:9b` (GPU)
-- Qdrant @ skvector.skstack01.douno.it
-- FalkorDB @ 192.168.0.59:16379
-
-## License
-
-GPL v3.0 — Part of the SKStacks ecosystem.
 
 ---
 
-*Built by Opus & Lumina, March 2026*
-*"The subconscious that never forgets."* 🌙🐧
+## Installation
+
+### Prerequisites
+
+- Python ≥ 3.11
+- `skmemory` installed (`pip install skmemory` or editable from source)
+- Ollama running locally or on a reachable host
+- SKCapstone agent directory structure at `~/.skcapstone/agents/<agent>/`
+
+### Option A — Script (recommended for first install)
+
+```bash
+git clone https://github.com/smilinTux/skwhisper.git ~/skwhisper-dev
+cd ~/skwhisper-dev
+
+# Install and start for a specific agent
+SKCAPSTONE_AGENT=jarvis ./scripts/install.sh --start
+
+# The script will:
+#   1. pip install the package
+#   2. Create ~/.skcapstone/agents/jarvis/config/skwhisper.toml (if missing)
+#   3. Create sessions/ and skwhisper/ state dirs
+#   4. Install skwhisper@.service template
+#   5. systemctl --user enable --now skwhisper@jarvis
+```
+
+### Option B — CLI install
+
+```bash
+pip install --user -e ~/skwhisper-dev
+
+# Install service for one or more agents
+SKCAPSTONE_AGENT=jarvis skwhisper install --agent jarvis --start
+SKCAPSTONE_AGENT=aster  skwhisper install --agent aster  --start
+```
+
+### Option C — Externally-managed Python (Ubuntu 23.04+)
+
+On systems that block `pip --user` (PEP 668):
+
+```bash
+# If ~/.skenv exists (SKCapstone standard venv)
+~/.skenv/bin/pip install -e ~/skwhisper-dev
+
+# Otherwise, force user install
+pip install --user --break-system-packages -e ~/skwhisper-dev
+```
+
+---
+
+## Estate-Wide Deployment
+
+To deploy skwhisper across multiple nodes, SSH to each and run the install script.
+The `SKCAPSTONE_AGENT` env var controls which agent is configured.
+
+### Single node
+
+```bash
+ssh chiap01 "cd ~/skwhisper-dev && git pull && SKCAPSTONE_AGENT=jarvis ./scripts/install.sh --start"
+```
+
+### All nodes in parallel (bash)
+
+```bash
+NODES="chiap01 chiap02 chiap03 chiap08 chiap09 chiap10"
+
+DEPLOY='
+set -e
+DEST=~/skwhisper-dev
+[ -d "$DEST" ] && (cd "$DEST" && git pull --quiet) || git clone --quiet https://github.com/smilinTux/skwhisper.git "$DEST"
+
+if [ -f ~/.skenv/bin/pip ]; then
+  ~/.skenv/bin/pip install -q -e "$DEST"
+  ln -sf ~/.skenv/bin/skwhisper ~/.local/bin/skwhisper 2>/dev/null || true
+else
+  pip3 install --user --break-system-packages -q -e "$DEST"
+fi
+
+SKCAPSTONE_AGENT=jarvis ~/.local/bin/skwhisper install --agent jarvis --start
+SKCAPSTONE_AGENT=aster  ~/.local/bin/skwhisper install --agent aster  --start
+'
+
+for host in $NODES; do
+  ssh -o BatchMode=yes $host "bash -s" <<< "$DEPLOY" 2>&1 | sed "s/^/[$host] /" &
+done
+wait
+```
+
+### Verify estate health
+
+```bash
+for host in chiap01 chiap02 chiap03 chiap08 chiap09 chiap10; do
+  echo -n "$host  jarvis="
+  ssh $host "systemctl --user is-active skwhisper@jarvis" 2>/dev/null
+  echo -n "        aster="
+  ssh $host "systemctl --user is-active skwhisper@aster"  2>/dev/null
+done
+```
+
+---
+
+## SKCapstone Integration
+
+SKWhisper is designed to work within the SKCapstone agent framework. Here's how the pieces connect.
+
+### Directory layout (per agent)
+
+```
+~/.skcapstone/agents/<agent>/
+├── config/
+│   └── skwhisper.toml        # SKWhisper config for this agent
+├── sessions/                 # Claude Code .jsonl transcripts (watched)
+├── memory/
+│   ├── short-term/           # Digested session memories land here
+│   ├── mid-term/
+│   └── long-term/
+├── skwhisper/
+│   ├── state.json            # Watcher offsets + digestion status
+│   ├── whisper.md            # Curated context — injected at session start
+│   ├── patterns.json         # Hot topics, people, repeated questions
+│   └── daemon.log            # Service log
+└── journal.md
+```
+
+### How whisper.md gets injected
+
+The SKMEMORY RITUAL (run by the session startup hook) reads `whisper.md` and prepends it into the Claude Code context window before each session. No manual steps required — once the service is running, every new session automatically gets the subconscious context.
+
+To verify injection is wired up, check your startup hook reads:
+```
+~/.skcapstone/agents/<agent>/skwhisper/whisper.md
+```
+
+### Triggering SKCapstone-aware digestion
+
+If you use `skcapstone coord` for task scheduling, you can trigger a digest or curate from a cron task:
+
+```bash
+# One-shot digest (e.g. from a cron task)
+SKCAPSTONE_AGENT=jarvis skwhisper digest
+
+# Force-regenerate whisper context
+SKCAPSTONE_AGENT=jarvis skwhisper curate
+
+# Process entire session backlog
+SKCAPSTONE_AGENT=jarvis skwhisper digest --backlog
+```
+
+### Adding a new agent
+
+```bash
+# 1. Create the agent directory structure (if not already done by skcapstone)
+mkdir -p ~/.skcapstone/agents/myagent/{sessions,memory/{short-term,mid-term,long-term},skwhisper,config}
+
+# 2. Install and start skwhisper for it
+SKCAPSTONE_AGENT=myagent skwhisper install --agent myagent --start
+
+# 3. Edit the generated config
+$EDITOR ~/.skcapstone/agents/myagent/config/skwhisper.toml
+
+# 4. Verify
+SKCAPSTONE_AGENT=myagent skwhisper status
+```
+
+---
+
+## Configuration
+
+Per-agent config at `~/.skcapstone/agents/<agent>/config/skwhisper.toml`.
+See `config/skwhisper.toml` in this repo for the full annotated template.
+
+```toml
+[agent]
+user_label = "Casey"       # Your name — used in transcript formatting
+agent_label = "Jarvis"     # Agent name
+
+[ollama]
+ollama_url = "http://localhost:11434"
+embed_model = "bge-large"
+summarize_model = "llama3.2"    # CPU; use qwen2.5:7b for GPU
+
+[qdrant]
+qdrant_url = "https://skvector.example.com"   # set "" to disable
+qdrant_api_key = "your-key"
+qdrant_collection = "jarvis-memory"
+
+[watcher]
+poll_interval = 60        # scan interval (seconds)
+idle_threshold = 300      # 5 min idle = ready to digest
+min_messages = 5          # skip tiny sessions
+
+[curator]
+curate_interval = 1800    # regenerate whisper.md every 30 min
+top_k = 10                # memories to surface via vector search
+```
+
+---
+
+## Systemd Service
+
+SKWhisper uses a **template unit** (`skwhisper@.service`) — one service file, one instance per agent.
+
+```bash
+# Install the template and enable for an agent (idempotent)
+SKCAPSTONE_AGENT=jarvis skwhisper install --agent jarvis --start
+
+# Or manually manage instances
+systemctl --user enable --now skwhisper@jarvis
+systemctl --user enable --now skwhisper@aster
+
+# Status
+systemctl --user status skwhisper@jarvis
+systemctl --user status skwhisper@aster
+
+# Restart after config change
+systemctl --user restart skwhisper@jarvis
+
+# Stop
+systemctl --user stop skwhisper@jarvis
+
+# Disable (won't start on login)
+systemctl --user disable skwhisper@jarvis
+
+# Logs
+journalctl --user -u skwhisper@jarvis -f
+tail -f ~/.skcapstone/agents/jarvis/skwhisper/daemon.log
+```
+
+The template file lives at `~/.config/systemd/user/skwhisper@.service` after install.
+A copy of the source template is at `skwhisper@.service` in this repo.
+
+---
+
+## CLI Reference
+
+```bash
+# Daemon
+skwhisper daemon                        # run in foreground (verbose with -v)
+
+# Digest
+skwhisper digest                        # one digest cycle
+skwhisper digest --backlog              # process all undigested sessions
+skwhisper digest --backlog --batch-size 5
+
+# Curate
+skwhisper curate                        # regenerate whisper.md
+skwhisper curate --stdout               # print to terminal instead
+
+# Inspect
+skwhisper status                        # daemon health + session stats
+skwhisper patterns                      # hot topics, people, projects
+skwhisper patterns --json               # machine-readable output
+
+# Service install
+skwhisper install                       # install for $SKCAPSTONE_AGENT
+skwhisper install --agent jarvis        # explicit agent name
+skwhisper install --agent jarvis --start  # install and start immediately
+
+# Global flags
+skwhisper -v <command>                  # verbose logging
+skwhisper -c /path/to/skwhisper.toml <command>  # explicit config
+```
+
+---
+
+## Runtime State
+
+| File | Purpose |
+|------|---------|
+| `~/.skcapstone/agents/<agent>/skwhisper/state.json` | Watcher offsets + digestion status per session |
+| `~/.skcapstone/agents/<agent>/skwhisper/whisper.md` | Latest curated context injected at session start |
+| `~/.skcapstone/agents/<agent>/skwhisper/patterns.json` | Accumulated hot topics, people, questions |
+| `~/.skcapstone/agents/<agent>/skwhisper/daemon.log` | Service log |
+
+---
+
+## How It Works
+
+### Digest loop (every 60s)
+1. Scans `~/.skcapstone/agents/<agent>/sessions/*.jsonl`
+2. Finds sessions idle >5 min with ≥5 messages
+3. Summarizes via Ollama (`summarize_model`)
+4. Extracts topics, people, projects, decisions as structured JSON
+5. Writes a short-term memory snapshot to `skmemory`
+6. Embeds the summary and upserts to Qdrant (if configured)
+7. Updates `patterns.json`
+
+### Curate loop (every 30m)
+1. Reads the last 2–3 active sessions to build a query context
+2. Embeds that context and searches Qdrant for the top-K most similar memories
+3. Combines semantic results + pattern data into `whisper.md`
+4. `whisper.md` is read by the SKMEMORY RITUAL at the start of every new session
+
+### Session classification
+Sessions are classified as `human` or `cron` based on early message content. Cron sessions (automated tasks, scheduled agents) are tracked separately and deprioritized in curator output, so human-driven context always surfaces first.
+
+---
+
+## Dependencies
+
+- Python ≥ 3.11
+- `httpx` — async HTTP for Ollama + Qdrant
+- `skmemory` — SKCapstone memory system
+- Ollama (local or remote):
+  - Embedding model: `bge-large` or `mxbai-embed-large`
+  - Summarization model: `llama3.2` (CPU) / `qwen2.5:7b` (GPU)
+- Qdrant — optional; disable with `qdrant_url = ""`
+
+---
+
+## License
+
+MIT — Part of the SKCapstone ecosystem.

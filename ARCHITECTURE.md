@@ -1,6 +1,6 @@
 # SKWhisper — Architecture Document
 
-> The subconscious layer for Lumina's memory system.
+> The subconscious layer for &lt;agent&gt;'s memory system.
 > Digest sessions → surface context → detect patterns — all async, zero latency cost.
 
 ## Overview
