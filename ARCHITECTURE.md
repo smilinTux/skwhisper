@@ -222,8 +222,10 @@ embed_model = "mxbai-embed-large"
 summarize_model = "qwen3.5:9b"
 
 [qdrant]
-url = "https://skvector.skstack01.douno.it"
-api_key = "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ"
+# RETIRED — vector store migrated to local Postgres+pgvector (clients/pgmem.py).
+# Set via env (SKVECTOR_URL / SKVECTOR_API_KEY) only if ever revived.
+url = ""
+api_key = ""
 collection = "lumina-memory"
 
 [watcher]
