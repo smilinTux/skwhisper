@@ -1,0 +1,23 @@
+[Unit]
+Description=Ollama (CPU) — skwhisper digest model, isolated from the 5060 Ti (qwen3.6) and the corrupt Arc iGPU
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ollama
+Group=ollama
+# CPU-only: hide CUDA (5060 Ti reserved for qwen3.6) and do NOT enable Vulkan
+# (the Arc iGPU corrupts generation — GGML_VK_VISIBLE_DEVICES=0 produces garbage).
+# Runs the small digest model (gemma3:1b) on the Ultra 9 285H CPU.
+Environment=OLLAMA_HOST=0.0.0.0:11436
+Environment=OLLAMA_MODELS=/mnt/comfyui/ollama-models
+Environment=CUDA_VISIBLE_DEVICES=
+Environment=OLLAMA_KEEP_ALIVE=-1
+Environment=OLLAMA_MAX_LOADED_MODELS=1
+ExecStart=/usr/local/bin/ollama serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

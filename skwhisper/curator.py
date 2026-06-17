@@ -28,7 +28,7 @@ async def curate_context(config: Config) -> str:
             log.info("No recent conversation context found")
             return _build_whisper(config, [], [], [], [])
 
-        # 2. Generate embedding of recent context (bge-legal-v2, 1024-dim)
+        # 2. Generate embedding of recent context (mxbai-embed-large, 1024-dim)
         embed_text = recent_text[:1500]
         log.info("Embedding recent context (%d chars)...", len(embed_text))
         vector = await pgmem.embed(embed_text)

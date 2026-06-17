@@ -17,8 +17,8 @@ import httpx
 
 log = logging.getLogger("skwhisper.chroma")
 
-_EMBED_URL = os.environ.get("SKMEMORY_EMBED_URL", "http://192.168.0.100:11435/api/embed")
-_EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "bge-legal-v2")
+_EMBED_URL = os.environ.get("SKMEMORY_EMBED_URL", "http://192.168.0.100:11434/api/embed")
+_EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "mxbai-embed-large")
 
 
 class ChromaClient:

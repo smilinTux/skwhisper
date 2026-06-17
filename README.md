@@ -86,13 +86,15 @@ flowchart TD
       CAPAUTH["capauth<br/>(identity)"]
       CLOUD9["cloud9<br/>(emotional continuity)"]
     end
-    subgraph COMPUTE["Compute"]
-      SKMODEL["skmodel → ollama<br/>(summarize + embed: mxbai-embed-large)"]
+    subgraph COMPUTE["Compute (.100 GPU host)"]
+      EMBED["ollama :11434<br/>(embed: mxbai-embed-large)"]
+      SUMM["qwen3.6 OpenAI :8082<br/>(summarize + topic extract)"]
     end
     subgraph DATA["Data"]
       SKMEMPG["skmem-pg (Postgres 17)<br/>pgvector = vectors · pg_search = BM25 · AGE = knowledge graph"]
     end
-    SKW -->|"summarize + embed"| SKMODEL
+    SKW -->|"embed digest"| EMBED
+    SKW -->|"summarize + topics"| SUMM
     SKW -->|"snapshot (short-term)"| SKMEMORY
     SKW -->|"upsert vectors + graph edges"| SKMEMPG
     SKW -->|"hybrid search (vec + BM25 RRF)"| SKMEMPG
@@ -125,9 +127,11 @@ template. Key knobs:
 
 ```toml
 [ollama]
-base_url        = "http://192.168.0.100:11434"
-embed_model     = "mxbai-embed-large"   # 1024-dim; query MUST be embedded with the same model
-summarize_model = "llama3.2:3b"
+ollama_url      = "http://192.168.0.100:11434"   # EMBED endpoint (Ollama, /api/embed)
+embed_model     = "mxbai-embed-large"            # 1024-dim; query MUST use the same model
+summarize_url   = "http://192.168.0.100:8082"    # SUMMARIZE endpoint (qwen3.6 OpenAI server)
+summarize_api   = "openai"                        # "openai" (default) | "ollama" (legacy /api/generate)
+summarize_model = "qwen3.6"
 
 [backends]
 vector_backend  = "pgvector"            # pgvector (default) | qdrant | chromadb
@@ -147,6 +151,36 @@ top_k           = 10                    # memories surfaced per curation
 Backend selection also honors env vars (`SKMEMORY_VECTOR_BACKEND`,
 `SKMEMORY_GRAPH_BACKEND`, `SKMEMORY_PG_DSN`), so a fleet can be steered without
 touching per-agent TOML.
+
+### Digest model routing (embed vs. summarize)
+
+Every digest makes **two** model calls, and as of 2026-06-17 they hit **different
+endpoints**:
+
+| Call | Endpoint | Config keys |
+|---|---|---|
+| **Embed** (1024-dim vector) | Ollama `mxbai-embed-large` at `http://192.168.0.100:11434/api/embed` | `ollama_url`, `embed_model` |
+| **Summarize** + topic extraction | qwen3.6-27B (OpenAI-compatible server) at `http://192.168.0.100:8082/v1/chat/completions` | `summarize_url`, `summarize_api`, `summarize_model` |
+
+Three new `[ollama]` keys drive the summarize side:
+
+- **`summarize_url`** — `http://192.168.0.100:8082` (the qwen3.6 OpenAI server)
+- **`summarize_api`** — `"openai"` (default) or `"ollama"` (legacy Ollama `/api/generate`)
+- **`summarize_model`** — `"qwen3.6"`
+
+**Why split them?** The `.100` host has a single 5060 Ti (16GB CUDA) running
+qwen3.6-27B (~13GB) — it is the *only* model that should run on that GPU. A separate
+small digest model has nowhere good to live: CUDA is full, the Intel Arc iGPU
+*corrupts* generated output over Vulkan (`GGML_VK_VISIBLE_DEVICES=0` → garbage,
+confirmed), and a CPU-resident model saturates the host. So digests **reuse the
+already-loaded qwen3.6** — zero extra VRAM, correct CUDA output, ~1.5s per short
+call. (Earlier `summarize_model` values — `llama3.2:3b`, then `qwen3.5:4b` — were
+both wrong: the first was removed from the host and produced a flood of 404s; the
+second spilled to CPU and saturated the box.)
+
+> An optional CPU-only fallback Ollama instance (`deploy/ollama-digest.service`,
+> port `11436`) exists for sites that want an isolated digest backend, but it ships
+> **disabled** — qwen3.6 reuse is preferred.
 
 ## CLI reference
 
@@ -183,8 +217,9 @@ skwhisper install [--agent X] [--start]   # write + enable the systemd template
 - Python ≥ 3.11 (`tomllib`, `asyncio`)
 - `httpx` — async HTTP to Ollama and the vector backends
 - `skmemory` — SKCapstone 3-tier memory system
-- A reachable Ollama (local or on `192.168.0.100`) with an embed model
-  (`mxbai-embed-large`) and a summarize model (`llama3.2:3b` / `qwen3.5:9b`)
+- A reachable embed endpoint — Ollama (local or on `192.168.0.100:11434`) serving
+  `mxbai-embed-large` — and a summarize endpoint — the qwen3.6-27B OpenAI-compatible
+  server on `192.168.0.100:8082` (see *Digest model routing* above)
 - A vector backend: Postgres + pgvector (default), or Qdrant, or ChromaDB
 
 ---

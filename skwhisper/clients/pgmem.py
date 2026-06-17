@@ -1,12 +1,12 @@
 """Local Postgres + pgvector memory client for skwhisper.
 
 Sovereign replacement for the Qdrant (skvector) client: reads/writes the shared
-`memories` table in skmem-pg (.158:5432), embeds via the bge-legal-v2 server
-(.100:11435), and searches via the hybrid (vector + BM25 RRF) SQL function
+`memories` table in skmem-pg (.158:5432), embeds via the mxbai-embed-large server
+(.100:11434), and searches via the hybrid (vector + BM25 RRF) SQL function
 `hybrid_search_memories()`. Decoupled — no skmemory import; raw SQL + httpx.
 
 Drop-in shape-compatible with the old QdrantClient:
-  - await embed(text) -> list[float]            (bge-legal-v2, 1024-dim)
+  - await embed(text) -> list[float]            (mxbai-embed-large, 1024-dim)
   - await search(q_text, q_vec, top_k) -> [{"payload": {...}, "score": float}]
   - await upsert(vector, payload, point_id)
   - await close()
@@ -28,9 +28,9 @@ PG_DSN = os.environ.get(
     "SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory"
 )
 EMBED_URL = os.environ.get(
-    "SKMEMORY_EMBED_URL", "http://192.168.0.100:11435/api/embed"
+    "SKMEMORY_EMBED_URL", "http://192.168.0.100:11434/api/embed"  # mxbai (Ollama); was :11435 bge
 )
-EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "bge-legal-v2")
+EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "mxbai-embed-large")  # was bge-legal-v2
 
 
 class PGMemClient:

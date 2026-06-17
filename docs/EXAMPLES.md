@@ -19,7 +19,7 @@ flowchart LR
     end
 
     subgraph Digest
-        D["🧠 Ollama<br/>llama3.2:3b<br/>Summarize + Extract"]
+        D["🧠 qwen3.6 :8082 (summarize + extract)<br/>+ Ollama :11434 (mxbai embed)"]
     end
 
     subgraph Storage["Triple-Write Storage"]
@@ -301,6 +301,67 @@ RestartSec=30
 [Install]
 WantedBy=default.target
 ```
+
+---
+
+## Example 7: Recommended multi-agent (swarm) setup
+
+Each agent runs its own SKWhisper daemon (`skwhisper@<agent>`) and keeps its own
+config at `~/.skcapstone/agents/<agent>/config/skwhisper.toml`. The piece every
+agent should share is the **digest model routing**: embeds on Ollama `:11434`,
+summaries on the resident qwen3.6 OpenAI server `:8082`. Only the per-agent labels
+differ.
+
+```toml
+# ~/.skcapstone/agents/lumina/config/skwhisper.toml
+[agent]
+user_label  = "Chef"
+agent_label = "Lumina"
+
+[ollama]
+# EMBED — Ollama mxbai-embed-large on the GPU host (:11434)
+ollama_url      = "http://192.168.0.100:11434"
+embed_model     = "mxbai-embed-large"       # 1024-dim; query MUST use the same model
+# SUMMARIZE — reuse the resident qwen3.6-27B via its OpenAI server (:8082)
+summarize_url   = "http://192.168.0.100:8082"
+summarize_api   = "openai"                   # "openai" (default) | "ollama" (legacy /api/generate)
+summarize_model = "qwen3.6"
+```
+
+```toml
+# ~/.skcapstone/agents/jarvis/config/skwhisper.toml
+[agent]
+user_label  = "Chef"
+agent_label = "Jarvis"
+
+[ollama]
+# Identical model routing — only the labels above change per agent
+ollama_url      = "http://192.168.0.100:11434"
+embed_model     = "mxbai-embed-large"
+summarize_url   = "http://192.168.0.100:8082"
+summarize_api   = "openai"
+summarize_model = "qwen3.6"
+```
+
+Enable each agent's daemon from the same systemd template:
+
+```bash
+systemctl --user enable --now skwhisper@lumina
+systemctl --user enable --now skwhisper@jarvis
+systemctl --user enable --now skwhisper@opus
+```
+
+**Why every agent points at the same two endpoints.** The `.100` host has a single
+5060 Ti (16GB CUDA) running qwen3.6-27B (~13GB) — the only model that belongs on
+that GPU. Pointing every agent's summaries at that already-loaded qwen3.6 costs zero
+extra VRAM and yields correct CUDA output (~1.5s per short call). Do **not** give an
+agent its own small summarize model: the Intel Arc iGPU corrupts Vulkan output and a
+CPU model saturates the host. (An optional isolated CPU-only fallback,
+`deploy/ollama-digest.service` on port `11436`, exists but ships disabled.)
+
+> Defaults already match this routing (`skwhisper/config.py`), so a per-agent file
+> that only sets `[agent]` labels inherits the correct endpoints. Spell out
+> `[ollama]` per the templates above when you want it explicit and self-documenting.
 
 ---
 

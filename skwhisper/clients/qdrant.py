@@ -2,7 +2,7 @@
 
 Conforms to the shared vector-client interface (embed/search/upsert/close) so it
 is interchangeable with PGMemClient and ChromaClient via clients/factory.py.
-Embeddings come from the shared embed server (bge-legal-v2 by default).
+Embeddings come from the shared embed server (mxbai-embed-large by default).
 """
 
 import os
@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 
 log = logging.getLogger("skwhisper.qdrant")
 
-_EMBED_URL = os.environ.get("SKMEMORY_EMBED_URL", "http://192.168.0.100:11435/api/embed")
-_EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "bge-legal-v2")
+_EMBED_URL = os.environ.get("SKMEMORY_EMBED_URL", "http://192.168.0.100:11434/api/embed")
+_EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "mxbai-embed-large")
 
 
 class QdrantClient:
@@ -39,7 +39,7 @@ class QdrantClient:
         return self._client
 
     async def embed(self, text: str) -> list[float]:
-        """Embed via the shared bge-legal-v2 server (Ollama /api/embed shape)."""
+        """Embed via the shared mxbai-embed-large server (Ollama /api/embed shape)."""
         async with httpx.AsyncClient(timeout=30.0) as c:
             resp = await c.post(_EMBED_URL, json={"model": _EMBED_MODEL, "input": text})
             resp.raise_for_status()

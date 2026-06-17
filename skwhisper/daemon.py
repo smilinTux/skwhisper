@@ -138,7 +138,7 @@ async def digest_session(
 
 async def run_digest_cycle(config: Config) -> int:
     """Run one digest cycle. Returns number of sessions digested."""
-    ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
+    ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model, summarize_url=config.summarize_url, summarize_api=config.summarize_api)
     qdrant = make_vector_client(config)
     memory = SKMemoryWriter(config.memory_dir)
     graph = make_graph_writer(config)  # AGE (default) / FalkorDB / None per config
@@ -229,7 +229,7 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
     print(f"Found {total} sessions pending digest.")
     total_batches = (total + batch_size - 1) // batch_size
 
-    ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model)
+    ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model, summarize_url=config.summarize_url, summarize_api=config.summarize_api)
     qdrant = make_vector_client(config)
     memory = SKMemoryWriter(config.memory_dir)
     graph = make_graph_writer(config)

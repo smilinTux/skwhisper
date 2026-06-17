@@ -29,7 +29,8 @@ The daemon's `run_daemon` loop runs two cadences (see `daemon.py`):
 sequenceDiagram
     participant W as Watcher (scan_sessions)
     participant D as Digester (digest_session)
-    participant O as Ollama
+    participant O as qwen3.6 :8082 (summarize)
+    participant E as Ollama :11434 (embed)
     participant M as skmemory (JSON)
     participant V as Vector backend (pgvector)
     participant G as Graph (AGE)
@@ -47,7 +48,7 @@ sequenceDiagram
         O-->>D: topics, people, projects, decisions, mood
         D->>M: write_snapshot(title, content, tags, emotions)
         M-->>D: mem_id
-        D->>O: embed(summary) -> 1024-dim vector
+        D->>E: embed(summary) -> 1024-dim vector
         D->>V: upsert(vector, payload, point_id=mem_id)
         D->>P: update_patterns(topics, people, questions)
         opt graph enabled
@@ -68,6 +69,11 @@ Key properties, all grounded in `daemon.py` / `watcher.py`:
   sweeps everything pending in batches — used for first-run catch-up.
 - **Safe summaries.** A summary shorter than 20 chars is discarded (the session is
   left pending rather than filed as junk).
+- **Dual endpoint (since 2026-06-17).** The two model calls per digest target
+  *different* hosts: **summarize** → qwen3.6-27B OpenAI server at
+  `http://192.168.0.100:8082/v1/chat/completions`; **embed** → Ollama
+  `mxbai-embed-large` at `http://192.168.0.100:11434/api/embed`. See
+  [Digest model routing](#digest-model-routing) below for the hardware rationale.
 
 ### Curate loop (briefing generation)
 
@@ -107,7 +113,7 @@ briefing reflects what *you* are working on, not what the scheduler ran.
 | `skwhisper/patterns.py` | `patterns.json` accumulation; `get_hot_topics`, `get_repeated_questions` (session-type aware) |
 | `skwhisper/config.py` | `$SKAGENT`/`$SKCAPSTONE_AGENT` resolution, TOML merge, config search path, defaults |
 | `skwhisper/clients/factory.py` | `make_vector_client` / `make_graph_writer` — backend selection |
-| `skwhisper/clients/ollama.py` | Async `embed` (`/api/embed`) + `summarize` + `extract_topics` |
+| `skwhisper/clients/ollama.py` | Async `embed` (`/api/embed` on `ollama_url`) + `summarize` + `extract_topics` (routed to `summarize_url` via `summarize_api`: OpenAI `:8082` or legacy Ollama `/api/generate`) |
 | `skwhisper/clients/pgmem.py` | **Default** vector backend: local Postgres + pgvector + pg_search BM25 hybrid |
 | `skwhisper/clients/qdrant.py` | Alternate vector backend: remote Qdrant / skvector |
 | `skwhisper/clients/chroma.py` | Alternate vector backend: local ChromaDB |
@@ -171,6 +177,66 @@ for installs that still front a remote vector/graph cluster.
 
 ---
 
+## Digest model routing
+
+Each digest makes **two** model calls, and (since 2026-06-17) they target two
+different endpoints with three dedicated `[ollama]` config keys:
+
+| Call | Endpoint | Driven by |
+|---|---|---|
+| **Embed** — 1024-dim vector | Ollama `mxbai-embed-large` at `http://192.168.0.100:11434/api/embed` | `ollama_url`, `embed_model` |
+| **Summarize** + topic extraction | qwen3.6-27B OpenAI-compatible server at `http://192.168.0.100:8082/v1/chat/completions` | `summarize_url`, `summarize_api`, `summarize_model` |
+
+- **`summarize_url`** = `http://192.168.0.100:8082` — the qwen3.6 OpenAI server.
+- **`summarize_api`** = `"openai"` (default) or `"ollama"` (legacy `/api/generate`).
+- **`summarize_model`** = `"qwen3.6"`.
+
+```mermaid
+flowchart LR
+    D["digest_session"] -->|"summarize + extract_topics<br/>summarize_api=openai"| QWEN["qwen3.6-27B<br/>OpenAI server :8082<br/>(5060 Ti / CUDA)"]
+    D -->|"embed (mxbai)"| OLLAMA["Ollama :11434<br/>mxbai-embed-large"]
+```
+
+**Hardware rationale.** The `.100` host has a single 5060 Ti (16GB CUDA) running
+qwen3.6-27B (~13GB), and that is the *only* model that should run on that GPU. A
+separate small digest model has nowhere good to live:
+
+- CUDA is already full with qwen3.6.
+- The Intel Arc iGPU **corrupts** generated output over Vulkan
+  (`GGML_VK_VISIBLE_DEVICES=0` produces garbage — confirmed).
+- A CPU-resident model spills and saturates the host.
+
+So digests **reuse the already-loaded qwen3.6** — zero extra VRAM, correct CUDA
+output, ~1.5s per short call. This is why `summarize_api` defaults to `"openai"`.
+Earlier `summarize_model` values were both wrong and are documented here as a
+warning: `llama3.2:3b` was removed from the host (→ a flood of 404s), and the
+stop-gap `qwen3.5:4b` spilled to CPU and saturated the box.
+
+> **Optional isolated fallback.** `deploy/ollama-digest.service` defines a CPU-only
+> Ollama instance on port `11436` for sites that want a dedicated, isolated digest
+> backend. It is currently **disabled** — qwen3.6 reuse is preferred.
+
+---
+
+## SessionEnd hook hardening
+
+The Claude Code `SessionEnd` hook (`hooks/skwhisper-save.sh`) triggers a digest +
+re-curate when a session closes. It was hardened (2026-06-17) so a slow or wedged
+digest can never hang the closing session:
+
+1. **Single-flight lock** — a per-agent `flock -n` so concurrent session-ends can't
+   stack digests on top of each other.
+2. **`timeout` caps** — 180s for the digest, 120s for the curate; a stuck backend
+   is killed rather than left running.
+3. **Detached, no held pipe** — `setsid` plus closed file descriptors so the hook
+   detaches and no longer holds Claude Code's stdout pipe open. That pipe-holding
+   was the actual cause of sessions **hanging on close**.
+
+Before this, ~47 digests piled up because there was no lock or timeout and they
+wedged on a stuck Ollama queue.
+
+---
+
 ## Where it lives in the SKWorld ecosystem
 
 SKWhisper is a **Core** capability deployed through skos like every other `sk*`
@@ -187,8 +253,9 @@ flowchart TD
       CAPAUTH["capauth"]
       CLOUD9["cloud9"]
     end
-    subgraph COMPUTE["Compute"]
-      SKMODEL["skmodel → ollama<br/>(summarize + mxbai embed)"]
+    subgraph COMPUTE["Compute (.100 GPU host)"]
+      EMBED["ollama :11434<br/>(embed: mxbai-embed-large)"]
+      SUMM["qwen3.6 OpenAI :8082<br/>(summarize + topic extract)"]
     end
     subgraph DATA["Data"]
       SKMEMPG["skmem-pg<br/>(pgvector + pg_search BM25 + Apache AGE)"]
@@ -198,7 +265,8 @@ flowchart TD
       SKCAP["skcapstone<br/>(agent home + \$SKAGENT)"]
     end
     SKCAP -->|"sessions/*.jsonl"| SKW
-    SKW -->|"summarize + embed"| SKMODEL
+    SKW -->|"embed digest"| EMBED
+    SKW -->|"summarize + topics"| SUMM
     SKW -->|"snapshots"| SKMEMORY
     SKW -->|"vectors + graph"| SKMEMPG
     SKW -->|"hybrid search"| SKMEMPG

@@ -18,9 +18,16 @@ DEFAULTS = {
     "sessions_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "sessions",
     "memory_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "memory",
     "state_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "skwhisper",
-    "ollama_url": "http://192.168.0.100:11434",
+    "ollama_url": "http://192.168.0.100:11434",  # embeddings (mxbai) — Ollama on the GPU host
     "embed_model": "mxbai-embed-large",
-    "summarize_model": "llama3.2:3b",
+    # Summarization reuses the already-resident qwen3.6 on the 5060 Ti via its
+    # OpenAI-compatible server (:8082) — the ONLY model on that GPU. The Arc iGPU
+    # corrupts generated output (GGML_VK_VISIBLE_DEVICES=0) and a separate small
+    # model has nowhere to run, so digests share qwen3.6 (zero extra VRAM, ~1.5s).
+    # summarize_api: "openai" (default, qwen3.6 :8082) | "ollama" (legacy /api/generate).
+    "summarize_url": "http://192.168.0.100:8082",
+    "summarize_api": "openai",
+    "summarize_model": "qwen3.6",
     # Vector backend selection: "pgvector" (default) | "qdrant" | "chromadb"
     "vector_backend": os.environ.get("SKMEMORY_VECTOR_BACKEND", "pgvector"),
     "qdrant_url": os.environ.get("SKVECTOR_URL", ""),

@@ -10,16 +10,54 @@ log = logging.getLogger("skwhisper.ollama")
 class OllamaClient:
     """Thin async client for Ollama API."""
 
-    def __init__(self, base_url: str, embed_model: str, summarize_model: str):
+    def __init__(self, base_url: str, embed_model: str, summarize_model: str,
+                 summarize_url: str | None = None, summarize_api: str = "ollama"):
         self.base_url = base_url.rstrip("/")
         self.embed_model = embed_model
         self.summarize_model = summarize_model
+        # Summarization may target a separate endpoint/engine from embeddings.
+        # Default = qwen3.6's OpenAI-compatible server (:8082); embeddings stay
+        # on Ollama (base_url). summarize_api: "openai" | "ollama".
+        self.summarize_url = (summarize_url or base_url).rstrip("/")
+        self.summarize_api = summarize_api
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=300.0)
+            self._client = httpx.AsyncClient(timeout=120.0)
         return self._client
+
+    async def _complete(self, system_prompt: str | None, user_content: str,
+                        temperature: float, max_tokens: int) -> str:
+        """Run a summarization/extraction completion against the summarize endpoint.
+
+        Supports the OpenAI chat shape (qwen3.6 :8082) and legacy Ollama
+        /api/generate. Returns the generated text (falling back to reasoning/
+        thinking fields that some models populate instead of content)."""
+        client = await self._get_client()
+        if self.summarize_api == "openai":
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_content})
+            resp = await client.post(
+                f"{self.summarize_url}/v1/chat/completions",
+                json={"model": self.summarize_model, "messages": messages,
+                      "temperature": temperature, "max_tokens": max_tokens},
+            )
+            resp.raise_for_status()
+            msg = (resp.json().get("choices") or [{}])[0].get("message", {}) or {}
+            return (msg.get("content") or msg.get("reasoning_content") or "").strip()
+        # Legacy Ollama /api/generate
+        payload = {"model": self.summarize_model, "prompt": user_content,
+                   "stream": False,
+                   "options": {"temperature": temperature, "num_predict": max_tokens}}
+        if system_prompt:
+            payload["system"] = system_prompt
+        resp = await client.post(f"{self.summarize_url}/api/generate", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return (data.get("response") or data.get("thinking") or "").strip()
 
     async def embed(self, text: str) -> list[float]:
         """Generate embedding vector for text."""
@@ -38,7 +76,6 @@ class OllamaClient:
 
     async def summarize(self, messages: str, system_prompt: str | None = None) -> str:
         """Summarize conversation text using the summarize model."""
-        client = await self._get_client()
         prompt = system_prompt or (
             "You are a memory digest agent. Summarize this conversation concisely in 2-3 paragraphs. Extract:\n"
             "- Key topics discussed\n"
@@ -49,28 +86,10 @@ class OllamaClient:
             "Be factual and specific. Include names, dates, and concrete details. "
             "Do NOT add commentary — just the digest."
         )
-
-        resp = await client.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.summarize_model,
-                "system": prompt,
-                "prompt": messages,
-                "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 800},
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        text = data.get("response", "").strip()
-        # Fallback: thinking models put output in "thinking" field, response may be empty
-        if not text:
-            text = data.get("thinking", "").strip()
-        return text
+        return await self._complete(prompt, messages, temperature=0.3, max_tokens=800)
 
     async def extract_topics(self, summary: str) -> dict:
         """Extract structured topics, entities, and questions from a summary."""
-        client = await self._get_client()
         prompt = (
             "Given this conversation summary, extract structured data as JSON:\n\n"
             f"{summary}\n\n"
@@ -81,17 +100,7 @@ class OllamaClient:
             "Be concise. Use lowercase for topics. Return ONLY the JSON."
         )
 
-        resp = await client.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.summarize_model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 500},
-            },
-        )
-        resp.raise_for_status()
-        text = resp.json().get("response", "").strip()
+        text = await self._complete(None, prompt, temperature=0.1, max_tokens=500)
 
         # Parse JSON from response (handle markdown code blocks)
         if "```" in text:

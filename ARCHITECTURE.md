@@ -60,7 +60,8 @@ SKWhisper is a background Python daemon that runs alongside OpenClaw. It watches
 3. Skip tool calls/results (too noisy), keep only conversational content
 4. When a session goes idle (no new lines for 5 minutes) OR file gets `.deleted` suffix:
    - Batch all undigested messages
-   - Send to ollama (`qwen3.5:9b`) for summarization:
+   - Send to the **summarize endpoint** (qwen3.6-27B OpenAI server, `:8082`) for
+     summarization + topic extraction:
      ```
      Summarize this conversation in 2-3 paragraphs. Extract:
      - Key topics discussed
@@ -70,8 +71,15 @@ SKWhisper is a background Python daemon that runs alongside OpenClaw. It watches
      - People/projects mentioned
      ```
    - Write summary as skmemory snapshot (short-term JSON file)
-   - Generate embedding via ollama (`mxbai-embed-large`) and upsert to Qdrant
+   - Generate embedding via the **embed endpoint** (Ollama `mxbai-embed-large`,
+     `:11434`) and upsert to the vector backend
    - Update pattern tracker with extracted topics
+
+   > **Dual-endpoint digest (since 2026-06-17).** The two model calls per digest go
+   > to *different* hosts: EMBED → Ollama `mxbai-embed-large` at
+   > `http://192.168.0.100:11434/api/embed`; SUMMARIZE → qwen3.6-27B at
+   > `http://192.168.0.100:8082/v1/chat/completions`. See **Design decisions** below
+   > for the hardware rationale.
 
 **State tracking:** `~/.skcapstone/agents/lumina/skwhisper/state.json`
 ```json
@@ -217,9 +225,11 @@ memory_dir = "~/.skcapstone/agents/lumina/memory"
 state_dir = "~/.skcapstone/agents/lumina/skwhisper"
 
 [ollama]
-base_url = "http://192.168.0.100:11434"
+ollama_url = "http://192.168.0.100:11434"     # EMBED endpoint (Ollama, /api/embed)
 embed_model = "mxbai-embed-large"
-summarize_model = "qwen3.5:9b"
+summarize_url = "http://192.168.0.100:8082"    # SUMMARIZE endpoint (qwen3.6 OpenAI server)
+summarize_api = "openai"                        # "openai" (default) | "ollama" (legacy)
+summarize_model = "qwen3.6"
 
 [qdrant]
 # RETIRED — vector store migrated to local Postgres+pgvector (clients/pgmem.py).
@@ -247,7 +257,26 @@ decay_days = 30
 
 1. **Polling over inotify** — simpler, works across NFS/Syncthing, no extra deps
 2. **httpx over qdrant_client** — already installed, avoids pip install complications on Python 3.14
-3. **qwen3.5:9b for summarization** — fast enough on CPU, good instruction following
+3. **Reuse qwen3.6 for summarization (dual-endpoint digest)** — the digest's two
+   model calls hit different endpoints: EMBED → Ollama `mxbai-embed-large` on
+   `:11434`, SUMMARIZE → the qwen3.6-27B OpenAI server on `:8082`. The `.100` host
+   has a single 5060 Ti (16GB CUDA) running qwen3.6-27B (~13GB), and that is the
+   *only* model that should run on that GPU. A separate small digest model has
+   nowhere good to live: CUDA is full, the Intel Arc iGPU *corrupts* generated
+   output over Vulkan (`GGML_VK_VISIBLE_DEVICES=0` → garbage, confirmed), and a
+   CPU-resident model saturates the host. So digests reuse the already-loaded
+   qwen3.6 — zero extra VRAM, correct CUDA output, ~1.5s per short call. (Earlier
+   `summarize_model` values `llama3.2:3b` then `qwen3.5:4b` were both wrong: one
+   was removed from the host → 404 flood, the other spilled to CPU.) An optional
+   CPU-only fallback Ollama (`deploy/ollama-digest.service`, port `11436`) exists
+   but ships **disabled**.
 4. **Short-term memory tier** — digested sessions go to short-term first, graduate naturally via existing skmemory promotion
 5. **File-based whisper output** — dead simple integration, any process can read whisper.md
 6. **Idempotent digestion** — state.json tracks offsets, re-running is safe
+7. **Hardened SessionEnd hook** — `hooks/skwhisper-save.sh` no longer lets a digest
+   wedge a closing session. It takes a single-flight per-agent `flock -n` lock so
+   concurrent session-ends can't stack digests, wraps work in `timeout` caps (180s
+   digest / 120s curate), and detaches via `setsid` with closed file descriptors so
+   it stops holding Claude Code's stdout pipe open (that pipe-holding was what made
+   sessions HANG on close). Before this, ~47 digests piled up with no lock or
+   timeout and wedged on a stuck Ollama queue.

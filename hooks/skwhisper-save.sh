@@ -21,11 +21,24 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null || ech
 REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
 SHORT_SID="${SESSION_ID:0:8}"
 
-# Run one digest cycle in background (don't block session exit)
-(
-  cd "$SKWHISPER_DIR"
-  PYTHONPATH="$SKWHISPER_DIR" python3 -m skwhisper digest >/dev/null 2>&1
-  PYTHONPATH="$SKWHISPER_DIR" python3 -m skwhisper curate >/dev/null 2>&1
-) &
+# Fire-and-forget a SINGLE digest cycle, fully detached. Three guards prevent
+# the pile-up that wedged sessions on close (2026-06-17):
+#   - flock -n  : single-flight. If a digest is already running for this agent,
+#                 skip this cycle instead of stacking another concurrent one.
+#   - timeout   : a wedged Ollama call can't hang forever (digest 180s, curate 120s).
+#   - setsid + </dev/null >/dev/null 2>&1 : fully detach so we DON'T inherit
+#                 Claude Code's stdout pipe — holding it open was what made the
+#                 session "hang" on close until the digest finished.
+LOCK="/tmp/skwhisper-digest-${AGENT}.lock"
+DETACH=""; command -v setsid >/dev/null 2>&1 && DETACH="setsid"
+$DETACH bash -c '
+  exec 9>"$0" || exit 0
+  flock -n 9 || exit 0          # another digest already running for this agent — skip
+  cd "$1" || exit 0
+  export PYTHONPATH="$1"
+  TO=""; command -v timeout >/dev/null 2>&1 && TO="timeout"
+  ${TO:+$TO 180} python3 -m skwhisper digest
+  ${TO:+$TO 120} python3 -m skwhisper curate
+' "$LOCK" "$SKWHISPER_DIR" </dev/null >/dev/null 2>&1 &
 
 exit 0

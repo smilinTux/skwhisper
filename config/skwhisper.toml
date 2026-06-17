@@ -22,10 +22,26 @@ user_label = "Casey"
 agent_label = "Lumina"   # e.g. Jarvis, Aster, Lumina
 
 [ollama]
-ollama_url = "http://192.168.0.100:11434"
-embed_model = "mxbai-embed-large"   # (digest embeds now go via bge-legal-v2 in clients/pgmem.py)
-# llama3.2:3b was removed from the Ollama host → use qwen3.5:4b for digest summaries.
-summarize_model = "qwen3.5:4b"
+# Each digest makes TWO model calls that target DIFFERENT endpoints:
+#
+#   1. EMBED     -> Ollama mxbai-embed-large (1024-dim vector) on :11434
+#   2. SUMMARIZE -> the already-resident qwen3.6-27B (OpenAI server) on :8082
+#
+# --- EMBED (vector) -------------------------------------------------------
+ollama_url = "http://192.168.0.100:11434"   # Ollama on the GPU host (/api/embed)
+embed_model = "mxbai-embed-large"            # 1024-dim; query MUST use the SAME model
+#
+# --- SUMMARIZE (LLM generation) -------------------------------------------
+# Reuse the qwen3.6-27B already loaded on the 5060 Ti (16GB CUDA). It is the
+# ONLY model that should run on that GPU: CUDA is full, the Intel Arc iGPU
+# CORRUPTS generated output via Vulkan (confirmed), and a separate small model
+# spills to CPU and saturates the host. Reusing qwen3.6 costs zero extra VRAM,
+# produces correct output, and a short digest call runs in ~1.5s.
+# (Prior summarize_model values — llama3.2:3b then qwen3.5:4b — were both wrong:
+#  one was removed from the host → 404 flood; the other spilled to CPU.)
+summarize_url = "http://192.168.0.100:8082"  # the qwen3.6 OpenAI-compatible server
+summarize_api = "openai"                      # "openai" (default) | "ollama" (legacy /api/generate)
+summarize_model = "qwen3.6"
 
 # Vector/graph store = local Postgres + pgvector (see clients/pgmem.py).
 # The douno cluster (qdrant/skvector + FalkorDB/skgraph) is RETIRED — these blocks
