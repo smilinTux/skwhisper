@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from .clients.factory import make_vector_client
+from .clients.sqlite_recency import SQLiteRecencyClient
 from .patterns import load_patterns, get_hot_topics, get_repeated_questions
 from .watcher import extract_messages
 from .config import Config
@@ -13,37 +14,55 @@ from .config import Config
 log = logging.getLogger("skwhisper.curator")
 
 
+def _get_recent_memories(config: Config) -> list[dict]:
+    """Pull the newest memories from the SQLite recency layer (best-effort)."""
+    index_db = config.memory_dir / "index.db"
+    recent = SQLiteRecencyClient(index_db).recent(limit=config.recent_k)
+    log.info("Recency feed: %d recent memories from SQLite index", len(recent))
+    return recent
+
+
 async def curate_context(config: Config) -> str:
     """
-    Generate a curated whisper context file based on recent sessions
-    and semantic memory search.
+    Generate a curated whisper context file. Two complementary memory feeds:
+      - **Recency** (SQLite `index.db`): the latest memories / recent sessions — a fast,
+        local, dependency-light structured query. "What just happened."
+      - **Semantic** (skmem-pg, hybrid vec+BM25): memories relevant to the recent
+        conversation. "What's relevant from all history."
     Returns the whisper content as a string.
     """
     pgmem = make_vector_client(config)
 
     try:
-        # 1. Gather recent conversation context
+        # 0. Recency feed — always available, even with no live conversation context.
+        recent_memories = _get_recent_memories(config)
+
+        # 1. Gather recent conversation context (anchor for semantic search)
         recent_text = _get_recent_context(config)
-        if not recent_text:
-            log.info("No recent conversation context found")
-            return _build_whisper(config, [], [], [], [])
-
-        # 2. Generate embedding of recent context (mxbai-embed-large, 1024-dim)
-        embed_text = recent_text[:1500]
-        log.info("Embedding recent context (%d chars)...", len(embed_text))
-        vector = await pgmem.embed(embed_text)
-
-        # 3. Hybrid (vector + BM25 RRF) search over local pg memories
-        log.info("Searching local pg (hybrid vec+BM25) for relevant memories...")
-        results = await pgmem.search(embed_text, vector, top_k=config.top_k)
-        log.info("Found %d relevant memories", len(results))
-
-        # 4. Get pattern data
+        # 4. Pattern data (from local state files — no pg dependency)
         hot_topics = get_hot_topics(config.state_dir, top_n=10, session_type="human")
         repeated_qs = get_repeated_questions(config.state_dir, min_count=2)
 
-        # 5. Build whisper file
-        whisper = _build_whisper(config, results, hot_topics, repeated_qs, [])
+        # 2–3. Semantic feed (skmem-pg). Best-effort: if pg/embed is unreachable we
+        # STILL write whisper from the recency feed + patterns — resilience is the point
+        # of splitting the relational (SQLite) and semantic (pg) layers.
+        results: list[dict] = []
+        if recent_text:
+            try:
+                embed_text = recent_text[:1500]
+                log.info("Embedding recent context (%d chars)...", len(embed_text))
+                vector = await pgmem.embed(embed_text)
+                log.info("Searching local pg (hybrid vec+BM25) for relevant memories...")
+                results = await pgmem.search(embed_text, vector, top_k=config.top_k)
+                log.info("Found %d relevant memories", len(results))
+            except Exception as e:
+                log.warning("Semantic feed (skmem-pg) unavailable (%s) — "
+                            "whisper from recency + patterns only", e)
+        else:
+            log.info("No recent conversation context — semantic feed skipped")
+
+        # 5. Build whisper (recency + semantic + patterns)
+        whisper = _build_whisper(config, results, hot_topics, repeated_qs, [], recent_memories)
 
         # 6. Write to file
         whisper_path = config.state_dir / "whisper.md"
@@ -133,8 +152,10 @@ def _build_whisper(
     hot_topics: list[dict],
     repeated_questions: list[dict],
     suggestions: list[str],
+    recent_memories: list[dict] | None = None,
 ) -> str:
     """Build the whisper.md content."""
+    recent_memories = recent_memories or []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     lines = [
         f"# SKWhisper Context — {now}",
@@ -142,6 +163,21 @@ def _build_whisper(
         "> Auto-generated subconscious context. Read-only.",
         "",
     ]
+
+    # Recent memories (recency layer — SQLite index; "what just happened")
+    if recent_memories:
+        _TIER_LABEL = {"today": "Today", "yesterday": "Yesterday", "week": "This week"}
+        lines.append("## Recent Memories (latest activity)")
+        lines.append("")
+        for r in recent_memories:
+            tier = _TIER_LABEL.get(r.get("context_tier", ""), r.get("context_tier", ""))
+            title = r.get("title") or "untitled"
+            preview = (r.get("summary") or r.get("content_preview") or "")[:160]
+            tag = f"[{tier}] " if tier else ""
+            lines.append(f"- {tag}**{title}**")
+            if preview:
+                lines.append(f"  {preview}")
+        lines.append("")
 
     # Relevant memories
     if memory_results:
@@ -187,7 +223,7 @@ def _build_whisper(
             lines.append(f"- {name}: {count} mentions")
         lines.append("")
 
-    if not memory_results and not hot_topics:
+    if not memory_results and not hot_topics and not recent_memories:
         lines.append("_No patterns detected yet. SKWhisper is still learning._")
         lines.append("")
 

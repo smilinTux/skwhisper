@@ -46,6 +46,10 @@ DEFAULTS = {
     "min_messages": 5,
     "curate_interval": 1800,
     "top_k": 10,
+    # Recency feed: newest memories pulled from the local SQLite index (relational/
+    # recency layer) — the "latest session info" half of whisper. Complements the
+    # semantic pg feed (top_k). See clients/sqlite_recency.py.
+    "recent_k": 8,
     "max_whisper_tokens": 2000,
     "top_n_topics": 20,
     "decay_days": 30,

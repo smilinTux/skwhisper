@@ -77,28 +77,51 @@ Key properties, all grounded in `daemon.py` / `watcher.py`:
 
 ### Curate loop (briefing generation)
 
+The curator blends **two complementary memory feeds** (see *Two memory layers* below):
+a **recency** feed (SQLite index — "what just happened") and a **semantic** feed
+(skmem-pg hybrid — "what's relevant"). The semantic feed is best-effort: if skmem-pg
+is unreachable, whisper.md is still written from recency + patterns.
+
 ```mermaid
 sequenceDiagram
     participant C as Curator (curate_context)
+    participant Q as SQLite index.db<br/>(recency layer)
     participant S as Recent sessions
     participant O as Ollama
-    participant V as Vector backend (pgvector + BM25)
+    participant V as skmem-pg<br/>(semantic: pgvector + BM25)
     participant P as patterns.json
     participant F as whisper.md
 
+    C->>Q: recent(recent_k) — active_memories view, created_at DESC
+    Q-->>C: newest memories (today / yesterday / week)
     C->>S: pick recent sessions (2 human + 1 cron, by mtime)
     S-->>C: last ~20 turns per session (truncated)
     C->>O: embed(recent context) -> 1024-dim vector
     C->>V: search(query_text, query_vec, top_k) [hybrid vec + BM25 RRF]
+    Note over C,V: best-effort — on failure, whisper still writes (recency + patterns)
     V-->>C: top-K memories with relevance scores
     C->>P: get_hot_topics(human) + get_repeated_questions
     P-->>C: pattern data
-    C->>F: write whisper.md (memories + topics + questions + people)
+    C->>F: write whisper.md (recent + relevant + topics + questions + people)
 ```
 
 The curator deliberately **prioritizes human-driven sessions** over cron/automation
 when choosing what's "recent" (`_get_recent_context` / `_is_cron_session`), so the
 briefing reflects what *you* are working on, not what the scheduler ran.
+
+### Two memory layers (recency + semantic)
+
+whisper draws from two indexes over the same flat-file source of truth, each good at
+a different query:
+
+| Layer | Store | Answers | Client |
+|---|---|---|---|
+| **Recency / relational** | SQLite `index.db` (`active_memories` view) | *"what just happened / latest sessions"* — fast, local, works even if Docker/pg is down | `clients/sqlite_recency.py` |
+| **Semantic / graph** | skmem-pg (pgvector + BM25 + AGE) | *"what's relevant across all history"* | `clients/pgmem.py` |
+
+This split is deliberate — it mirrors `skmemory`'s own architecture (the CLI reads the
+SQLite index; semantic/graph reasoning uses skmem-pg) and gives whisper resilience: the
+recency feed keeps working when the heavy backend doesn't.
 
 ---
 
@@ -114,7 +137,8 @@ briefing reflects what *you* are working on, not what the scheduler ran.
 | `skwhisper/config.py` | `$SKAGENT`/`$SKCAPSTONE_AGENT` resolution, TOML merge, config search path, defaults |
 | `skwhisper/clients/factory.py` | `make_vector_client` / `make_graph_writer` — backend selection |
 | `skwhisper/clients/ollama.py` | Async `embed` (`/api/embed` on `ollama_url`) + `summarize` + `extract_topics` (routed to `summarize_url` via `summarize_api`: OpenAI `:8082` or legacy Ollama `/api/generate`) |
-| `skwhisper/clients/pgmem.py` | **Default** vector backend: local Postgres + pgvector + pg_search BM25 hybrid |
+| `skwhisper/clients/pgmem.py` | **Semantic** feed: local Postgres + pgvector + pg_search BM25 hybrid |
+| `skwhisper/clients/sqlite_recency.py` | **Recency** feed: read-only accessor for the newest memories in the skmemory SQLite index (`active_memories` view) |
 | `skwhisper/clients/qdrant.py` | Alternate vector backend: remote Qdrant / skvector |
 | `skwhisper/clients/chroma.py` | Alternate vector backend: local ChromaDB |
 | `skwhisper/clients/agegraph.py` | **Default** graph writer: Apache AGE inside the local Postgres |
