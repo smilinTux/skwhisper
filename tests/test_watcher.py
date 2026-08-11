@@ -253,6 +253,37 @@ def test_patterns_session_type_tracking():
         print(f"  Cron topics: {cron_topic_names}")
 
 
+def test_curator_skips_broken_session_symlinks(tmp_path):
+    """Recent-context selection should not crash on stale transcript links."""
+    from skwhisper.config import Config
+    from skwhisper.curator import _get_recent_context
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (sessions_dir / "broken.jsonl").symlink_to(tmp_path / "missing.jsonl")
+
+    good = sessions_dir / "good.jsonl"
+    good.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "message", "message": {"role": "user", "content": "This is a valid human message."}}),
+                json.dumps({"type": "message", "message": {"role": "assistant", "content": "This is a valid assistant response."}}),
+            ]
+        )
+        + "\n"
+    )
+
+    config = Config()
+    config._data["sessions_dir"] = sessions_dir
+    config._data["state_dir"] = state_dir
+
+    recent = _get_recent_context(config)
+
+    assert "valid human message" in recent
+
+
 if __name__ == "__main__":
     print("Running SKWhisper tests...\n")
     test_extract_messages()

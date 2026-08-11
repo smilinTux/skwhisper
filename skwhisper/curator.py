@@ -28,7 +28,11 @@ async def curate_context(config: Config) -> str:
         recent_text = _get_recent_context(config)
         if not recent_text:
             log.info("No recent conversation context found")
-            return _build_whisper(config, [], [], [], [])
+            whisper = _build_whisper(config, [], [], [], [])
+            whisper_path = config.state_dir / "whisper.md"
+            whisper_path.write_text(whisper)
+            log.info("Wrote fallback whisper context: %s (%d chars)", whisper_path, len(whisper))
+            return whisper
 
         # 2. Generate embedding of recent context
         # mxbai-embed-large has ~512 token limit (~1000 chars); truncate safely
@@ -97,12 +101,20 @@ def _is_cron_session(path: Path) -> bool:
 def _get_recent_context(config: Config) -> str:
     """Extract text from the most recent active sessions, prioritizing human-driven ones."""
     sessions_dir = config.sessions_dir
-    # Get most recent active .jsonl files by mtime
-    active = sorted(
-        sessions_dir.glob("*.jsonl"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    # Get most recent active .jsonl files by mtime. Session directories often
+    # contain symlinks into rotated Claude transcript folders, so stale links
+    # must be skipped instead of aborting the daemon cycle.
+    active_with_mtime = []
+    for path in sessions_dir.glob("*.jsonl"):
+        try:
+            active_with_mtime.append((path.stat().st_mtime, path))
+        except OSError:
+            log.warning("Skipping unavailable session transcript: %s", path)
+
+    active = [
+        path
+        for _, path in sorted(active_with_mtime, key=lambda item: item[0], reverse=True)
+    ]
 
     # Separate human-driven sessions from cron/automated sessions
     human_sessions = []

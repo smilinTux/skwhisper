@@ -176,8 +176,10 @@ def cmd_status(args):
     # Also count files on disk not yet tracked in state
     for path in sessions_dir.glob("*.jsonl"):
         sid = path.stem
-        if sid not in sessions:
+        if sid not in sessions and path.exists():
             n_pending += 1
+        elif sid not in sessions:
+            n_missing += 1
 
     # --- Daemon health ---
     daemon_status = _check_daemon_health()
