@@ -271,8 +271,10 @@ Environment=SKCAPSTONE_AGENT=%i
 Environment=HOME={home}
 Restart=on-failure
 RestartSec=30
-StandardOutput=append:{home}/.skcapstone/agents/%i/skwhisper/daemon.log
-StandardError=append:{home}/.skcapstone/agents/%i/skwhisper/daemon.log
+# Log to journald (bounded + rotated). The old append:daemon.log was UNBOUNDED and
+# grew past 300M per agent, helping push a node to 99% disk (2026-08-15).
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target
