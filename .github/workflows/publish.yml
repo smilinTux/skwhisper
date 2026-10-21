@@ -1,0 +1,90 @@
+name: Publish to PyPI
+
+# Why this exists: skwhisper had NO workflows at all, so the index sat at 0.1.0
+# while every chi host ran 0.6.2 built from this repo. That gap meant skwhisper
+# could not be pinned in skcapstone's deploy/fleet-constraints.txt, because
+# pinning 0.6.2 was unresolvable and pinning 0.1.0 would have downgraded the
+# fleet. See skcapstone PR #1284.
+#
+# Unlike skmemory, this project carries a STATIC version in pyproject.toml rather
+# than deriving it from the tag with setuptools-scm. So there is deliberately no
+# auto-tag-on-main job here: a release is an explicit `git tag vX.Y.Z` whose
+# version must match pyproject, which the build job asserts. That keeps a push to
+# main from silently publishing a version nobody chose.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Refuse to publish a tag that is not on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "OK: ${GITHUB_REF_NAME} (${GITHUB_SHA:0:8}) is on main."
+            exit 0
+          fi
+          echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA:0:8}, which is NOT on main. Refusing to publish."
+          exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Assert the tag matches the version in pyproject.toml
+        # The version is static here, so a tag that disagrees with pyproject
+        # would publish something other than what the tag claims.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          proj="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag=$tag pyproject=$proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::tag v$tag does not match pyproject version $proj. Bump pyproject in the same commit you tag."
+            exit 1
+          fi
+
+      - run: python -m pip install --upgrade build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi-publish:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    # Trusted Publishing (OIDC). This requires a PyPI-side publisher for the
+    # skwhisper project: owner=smilinTux, repo=skwhisper, workflow=publish.yml,
+    # environment=pypi. Until that exists, this job fails at the upload step and
+    # nothing is published.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
