@@ -18,7 +18,9 @@
 
 [agent]
 # Labels used when formatting conversation transcripts for the summarizer.
-user_label = "Casey"
+# Set user_label to the agent's human (e.g. "Chef", "Casey"). The built-in
+# default is the neutral "User"; set it explicitly per agent.
+user_label = "User"
 agent_label = "Lumina"   # e.g. Jarvis, Aster, Lumina
 
 [ollama]
