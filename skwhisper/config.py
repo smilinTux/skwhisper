@@ -39,7 +39,10 @@ DEFAULTS = {
     "falkordb_host": "192.168.0.59",
     "falkordb_port": 16379,
     "falkordb_graph": f"{_AGENT}_knowledge",
-    "user_label": "Casey",
+    # Neutral on purpose. Every agent's human differs (Chef on nor, Casey on chi),
+    # and a named default silently mislabels any agent without an explicit
+    # per-agent [agent] user_label, which then gets baked into its digests.
+    "user_label": "User",
     "agent_label": _AGENT.capitalize(),
     "poll_interval": 60,
     "idle_threshold": 300,
