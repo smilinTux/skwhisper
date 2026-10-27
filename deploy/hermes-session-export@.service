@@ -1,0 +1,7 @@
+[Unit]
+Description=Export Hermes state.db conversations to JSONL for skwhisper (%i)
+
+[Service]
+Type=oneshot
+Environment=SKAGENT=%i
+ExecStart=/usr/bin/env python3 %h/.local/bin/hermes-session-export --out %h/.skcapstone/agents/%i/sessions

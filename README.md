@@ -196,6 +196,21 @@ skwhisper patterns [--json]         # hot topics / repeated questions / entities
 skwhisper install [--agent X] [--start]   # write + enable the systemd template
 ```
 
+## Hermes sessions (state.db bridge)
+
+Current Hermes no longer writes `~/.hermes/sessions/<id>.jsonl`; conversations live only in
+`~/.hermes/state.db`, which the watcher cannot read. `scripts/hermes-session-export.py` reads
+state.db read-only and writes one append-only `<session_id>.jsonl` per conversation (cron and
+subagent sessions skipped) into the agent's `sessions_dir`. Install it with the units in `deploy/`:
+
+```
+install -m755 scripts/hermes-session-export.py ~/.local/bin/hermes-session-export
+cp deploy/hermes-session-export@.{service,timer} ~/.config/systemd/user/
+systemctl --user enable --now hermes-session-export@<agent>.timer
+```
+
+Point `sessions_dir` at a real directory for this, not a symlink to `~/.hermes/sessions`.
+
 ## Runtime state (per agent)
 
 | File (under `~/.skcapstone/agents/<agent>/skwhisper/`) | Purpose |
