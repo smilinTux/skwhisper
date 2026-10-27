@@ -51,3 +51,15 @@ def test_default_unchanged_for_direct_users():
 
     asyncio.run(_client(h).summarize("x"))
     assert "chat_template_kwargs" not in bodies[0]
+
+
+def test_transcript_is_fenced():
+    bodies = []
+
+    def h(req):
+        bodies.append(json.loads(req.content))
+        return _ok("a fine summary of the chat")
+
+    asyncio.run(_client(h, summarize_thinking=False).summarize("Chef: what is SK status?"))
+    user = bodies[0]["messages"][-1]["content"]
+    assert "<transcript>\nChef: what is SK status?\n</transcript>" in user
