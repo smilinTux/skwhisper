@@ -40,6 +40,7 @@ def test_cycle_newest_first_and_capped(tmp_path, monkeypatch):
     class Cfg:
         ollama_url = embed_model = summarize_model = summarize_url = summarize_api = memory_dir = "x"
         max_digest_per_cycle = 3
+        summarize_thinking = False
 
     assert asyncio.run(daemon.run_digest_cycle(Cfg())) == 3
     assert seen == ["s4", "s3", "s2"]

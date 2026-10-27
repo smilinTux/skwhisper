@@ -11,7 +11,8 @@ class OllamaClient:
     """Thin async client for Ollama API."""
 
     def __init__(self, base_url: str, embed_model: str, summarize_model: str,
-                 summarize_url: str | None = None, summarize_api: str = "ollama"):
+                 summarize_url: str | None = None, summarize_api: str = "ollama",
+                 summarize_thinking: bool = True):
         self.base_url = base_url.rstrip("/")
         self.embed_model = embed_model
         self.summarize_model = summarize_model
@@ -20,6 +21,11 @@ class OllamaClient:
         # on Ollama (base_url). summarize_api: "openai" | "ollama".
         self.summarize_url = (summarize_url or base_url).rstrip("/")
         self.summarize_api = summarize_api
+        # Reasoning models spend the whole max_tokens budget thinking and return
+        # empty content (then we fall back to the reasoning text: unparseable
+        # topics JSON and generic "Session Digest" titles). False asks the
+        # server to skip thinking (llama.cpp/vLLM chat_template_kwargs, Ollama think).
+        self.summarize_thinking = summarize_thinking
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -40,11 +46,18 @@ class OllamaClient:
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": user_content})
-            resp = await client.post(
-                f"{self.summarize_url}/v1/chat/completions",
-                json={"model": self.summarize_model, "messages": messages,
-                      "temperature": temperature, "max_tokens": max_tokens},
-            )
+            body = {"model": self.summarize_model, "messages": messages,
+                    "temperature": temperature, "max_tokens": max_tokens}
+            if not self.summarize_thinking:
+                body["chat_template_kwargs"] = {"enable_thinking": False}
+            url = f"{self.summarize_url}/v1/chat/completions"
+            resp = await client.post(url, json=body)
+            if resp.status_code == 400 and "chat_template_kwargs" in body:
+                # Endpoint rejects the extension: retry plain, and stop sending it.
+                log.info("summarize endpoint rejected chat_template_kwargs; retrying without")
+                self.summarize_thinking = True
+                body.pop("chat_template_kwargs")
+                resp = await client.post(url, json=body)
             resp.raise_for_status()
             msg = (resp.json().get("choices") or [{}])[0].get("message", {}) or {}
             return (msg.get("content") or msg.get("reasoning_content") or "").strip()
@@ -54,6 +67,8 @@ class OllamaClient:
                    "options": {"temperature": temperature, "num_predict": max_tokens}}
         if system_prompt:
             payload["system"] = system_prompt
+        if not self.summarize_thinking:
+            payload["think"] = False
         resp = await client.post(f"{self.summarize_url}/api/generate", json=payload)
         resp.raise_for_status()
         data = resp.json()

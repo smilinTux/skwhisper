@@ -28,6 +28,9 @@ DEFAULTS = {
     "summarize_url": "http://192.168.0.100:8082",
     "summarize_api": "openai",
     "summarize_model": "qwen3.6",
+    # Let the summarizer "think" first? Off: digests are extraction, and reasoning
+    # models otherwise burn max_tokens on thinking and return no content.
+    "summarize_thinking": False,
     # Vector backend selection: "pgvector" (default) | "qdrant" | "chromadb"
     "vector_backend": os.environ.get("SKMEMORY_VECTOR_BACKEND", "pgvector"),
     "qdrant_url": os.environ.get("SKVECTOR_URL", ""),
