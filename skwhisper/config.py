@@ -46,7 +46,11 @@ DEFAULTS = {
     "agent_label": _AGENT.capitalize(),
     "poll_interval": 60,
     "idle_threshold": 300,
-    "min_messages": 5,
+    # A quick question and its answer (2 messages) is a real conversation.
+    "min_messages": 2,
+    # Digest at most this many sessions per poll cycle, newest first, so a
+    # backlog drains gradually instead of saturating the summarizer.
+    "max_digest_per_cycle": 20,
     "curate_interval": 1800,
     "top_k": 10,
     # Recency feed: newest memories pulled from the local SQLite index (relational/

@@ -135,7 +135,8 @@ def test_config(monkeypatch):
     config = cfg_mod.Config()  # No TOML, use defaults
     assert config.ollama_url == "http://192.168.0.100:11434"
     assert config.qdrant_collection == "lumina-memory"
-    assert config.min_messages == 5
+    assert config.min_messages == 2
+    assert config.max_digest_per_cycle == 20
     # Sovereign default: sessions live under skcapstone agent home
     assert str(config.sessions_dir).endswith("/.skcapstone/agents/lumina/sessions")
     print("✓ config: OK")
@@ -193,30 +194,92 @@ def test_classify_session_cron_keyword():
     print("✓ classify_session (cron keywords): OK")
 
 
-def test_classify_session_cron_file_size():
-    """Small file with few user messages classified as cron."""
-    import tempfile
+def _write_jsonl(path, lines):
+    path.write_text("".join(json.dumps(l) + "\n" for l in lines))
+    return path
+
+
+def test_short_real_chat_is_human(tmp_path):
+    """A one-question chat is a conversation, not cron (was: tiny file => cron)."""
+    from skwhisper.watcher import classify_session, extract_messages
+
+    p = _write_jsonl(tmp_path / "s.jsonl", [
+        {"type": "session_meta", "session_id": "s", "source": "telegram"},
+        {"role": "user", "content": "what time is dinner tonight?"},
+        {"role": "assistant", "content": "Dinner is at 7, Chef."},
+    ])
+    msgs, _ = extract_messages(p)
+    assert classify_session(msgs, p) == "human"
+
+    # Same for a short transcript without any metadata (Claude Code, legacy).
+    q = _write_jsonl(tmp_path / "q.jsonl", [
+        {"type": "message", "message": {"role": "user", "content": "run the tests please"}},
+        {"type": "message", "message": {"role": "assistant", "content": "All 16 tests pass."}},
+    ])
+    msgs, _ = extract_messages(q)
+    assert classify_session(msgs, q) == "human"
+
+
+def test_classify_by_source_metadata(tmp_path):
+    """Hermes source metadata is authoritative, in both exporter and legacy shapes."""
     from skwhisper.watcher import classify_session
 
-    msgs = [
-        {"role": "user", "text": "run task"},
-        {"role": "assistant", "text": "done"},
-    ]
+    human_msgs = [{"role": "user", "text": "hey, quick question about the heartbeat monitor"}]
+    for i, (key, src, want) in enumerate([
+        ("source", "cron", "cron"), ("source", "subagent", "cron"), ("source", "oneshot", "cron"),
+        ("source", "nctalk", "human"), ("source", "api_server", "human"),
+        ("platform", "telegram", "human"), ("platform", "cron", "cron"),
+    ]):
+        meta = {"type" if key == "source" else "role": "session_meta", key: src}
+        p = _write_jsonl(tmp_path / f"m{i}.jsonl", [meta])
+        # 'heartbeat' would trip the keyword fallback; metadata wins for real chats.
+        assert classify_session(human_msgs, p) == want, (key, src)
 
-    # Write a tiny file (< 6000 bytes, <= 3 user messages)
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-        f.write('{"type": "message", "message": {"role": "user", "content": "run task"}}\n')
-        f.write('{"type": "message", "message": {"role": "assistant", "content": "done"}}\n')
-        fname = f.name
 
-    try:
-        from pathlib import Path
-        result = classify_session(msgs, Path(fname))
-        assert result == "cron", f"Tiny file with 1 user msg should be 'cron', got '{result}'"
-        print("✓ classify_session (small file): OK")
-    finally:
-        import os
-        os.unlink(fname)
+def test_partial_line_not_consumed(tmp_path):
+    """A line still being written is left for the next read (offset not advanced past it)."""
+    from skwhisper.watcher import extract_messages
+
+    p = tmp_path / "s.jsonl"
+    full = json.dumps({"role": "user", "content": "first complete message"}) + "\n"
+    p.write_text(full + '{"role": "assistant", "content": "half wri')
+    msgs, off = extract_messages(p)
+    assert len(msgs) == 1 and off == len(full)
+    with open(p, "a") as f:
+        f.write('tten reply"}\n')
+    msgs, _ = extract_messages(p, off)
+    assert [m["text"] for m in msgs] == ["half written reply"]
+
+
+def test_digested_session_continuation(tmp_path):
+    """A digested session that keeps growing gets its new part digested, once idle."""
+    import time as _t
+    from skwhisper.config import Config
+    from skwhisper.watcher import scan_sessions, mark_digested, extract_messages
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    cfg_file = tmp_path / "c.toml"
+    cfg_file.write_text(f'[a]\nsessions_dir = "{sessions}"\nstate_dir = "{tmp_path / "st"}"\n')
+    config = Config(cfg_file)
+    p = _write_jsonl(sessions / "s1.jsonl", [
+        {"type": "session_meta", "session_id": "s1", "source": "telegram"},
+        {"role": "user", "content": "morning, what is on today?"},
+        {"role": "assistant", "content": "Two calls and the dentist."},
+    ])
+    _, off = extract_messages(p)
+    mark_digested(config, "s1", off)
+    old = _t.time() - 3600
+    os.utime(p, (old, old))
+    assert scan_sessions(config) == []
+
+    with open(p, "a") as f:
+        f.write(json.dumps({"role": "user", "content": "move the dentist to friday"}) + "\n")
+        f.write(json.dumps({"role": "assistant", "content": "Done, Friday at 10."}) + "\n")
+    os.utime(p, (old, old))
+    got = scan_sessions(config)
+    assert len(got) == 1 and got[0]["continuation"]
+    assert [m["text"] for m in got[0]["messages"]] == ["move the dentist to friday", "Done, Friday at 10."]
 
 
 def test_classify_session_no_false_positive():

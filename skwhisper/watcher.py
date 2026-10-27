@@ -23,30 +23,53 @@ _CRON_KEYWORDS = (
 )
 
 
+# Session sources (Hermes `sessions.source`, legacy Hermes `platform`) that are
+# automation, not a conversation with the agent's human.
+AUTOMATED_SOURCES = frozenset({"cron", "subagent", "oneshot", "system"})
+
+
+def read_session_meta(path: Path | None) -> dict | None:
+    """Return the session_meta header of a transcript, if it has one.
+
+    Two shapes: the state.db exporter writes ``{"type": "session_meta", "source": ...}``
+    and legacy Hermes JSONL starts with ``{"role": "session_meta", "platform": ...}``.
+    Claude Code / OpenClaw transcripts have no such header (returns None)."""
+    if path is None:
+        return None
+    try:
+        with open(path, "r") as f:
+            first = f.readline()
+        entry = json.loads(first)
+    except (OSError, ValueError):
+        return None
+    if isinstance(entry, dict) and "session_meta" in (entry.get("type"), entry.get("role")):
+        return entry
+    return None
+
+
 def classify_session(messages: list[dict], path: Path | None = None) -> str:
     """
     Classify a session as 'human' or 'cron'.
 
-    Primary signal: content patterns in early messages (cron markers, automation keywords).
-    Secondary signal: very small file + few user turns suggests an automated session.
+    Primary signal: the session's own source metadata (Hermes marks cron,
+    subagent and oneshot sessions). When present it is authoritative, so a
+    short real chat is never mistaken for automation.
+    Fallback for transcripts without metadata: automation markers in the early
+    messages. Length is deliberately NOT a signal: a two-line question is as
+    real as a two-hour session.
 
     Returns 'cron' or 'human'.
     """
-    # Check first 10 messages for cron markers
+    meta = read_session_meta(path)
+    if meta is not None:
+        source = str(meta.get("source") or meta.get("platform") or "").lower()
+        if source:
+            return "cron" if source in AUTOMATED_SOURCES else "human"
+
     for msg in messages[:10]:
         text = msg.get("text", "").lower()
         if any(kw in text for kw in _CRON_KEYWORDS):
             return "cron"
-
-    # Secondary: tiny file + very few user messages → likely automated
-    if path is not None and messages:
-        user_count = sum(1 for m in messages if m["role"] == "user")
-        try:
-            size = path.stat().st_size
-            if size < 6000 and user_count <= 3:
-                return "cron"
-        except OSError:
-            pass
 
     return "human"
 
@@ -82,7 +105,8 @@ def extract_messages(jsonl_path: Path, offset: int = 0) -> tuple[list[dict], int
             f.seek(offset)
             while True:
                 line = f.readline()
-                if not line:
+                if not line or not line.endswith("\n"):
+                    # EOF, or a line still being written: leave it for next time.
                     break
                 new_offset = f.tell()
                 line = line.strip()
@@ -149,6 +173,29 @@ def extract_messages(jsonl_path: Path, offset: int = 0) -> tuple[list[dict], int
     return messages, new_offset
 
 
+def _continuation(path: Path, session_id: str, session_state: dict, config: Config, now: float) -> dict | None:
+    """A digested session that kept going (same Hermes chat, resumed Claude Code
+    session): digest only what was added after the digested offset, once idle."""
+    offset = session_state.get("offset", 0)
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if offset <= 0 or st.st_size <= offset or now - st.st_mtime < config.idle_threshold:
+        return None
+    messages, new_offset = extract_messages(path, offset)
+    if len(messages) < config.min_messages:
+        return None
+    return {
+        "path": path,
+        "session_id": session_id,
+        "messages": messages,
+        "new_offset": new_offset,
+        "is_idle": True,
+        "continuation": True,
+    }
+
+
 def scan_sessions(config: Config) -> list[dict]:
     """
     Scan for sessions that need digesting.
@@ -165,6 +212,9 @@ def scan_sessions(config: Config) -> list[dict]:
         session_state = state.get("sessions", {}).get(session_id, {})
 
         if session_state.get("digested"):
+            cont = _continuation(path, session_id, session_state, config, now)
+            if cont:
+                results.append(cont)
             continue
 
         offset = session_state.get("offset", 0)

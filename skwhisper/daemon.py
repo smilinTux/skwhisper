@@ -56,6 +56,8 @@ async def digest_session(
         topics = extracted.get("topics", [])[:3]
         title_parts = [t.title() for t in topics] if topics else ["Session Digest"]
         title = f"Session Digest — {', '.join(title_parts)}"
+        if session.get("continuation"):
+            title += " (continued)"
 
         # 6. Determine tags (include session type for filtering)
         tags = ["skwhisper", "auto-digest", session_type]
@@ -136,6 +138,13 @@ async def digest_session(
         return False
 
 
+def _mtime(session: dict) -> float:
+    try:
+        return session["path"].stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 async def run_digest_cycle(config: Config) -> int:
     """Run one digest cycle. Returns number of sessions digested."""
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model, summarize_url=config.summarize_url, summarize_api=config.summarize_api)
@@ -151,7 +160,11 @@ async def run_digest_cycle(config: Config) -> int:
             log.debug("No idle sessions to digest")
             return 0
 
-        log.info("Found %d sessions to digest", len(idle_sessions))
+        # Newest conversations first; the rest wait for later cycles.
+        idle_sessions.sort(key=_mtime, reverse=True)
+        cap = config.max_digest_per_cycle
+        log.info("Found %d sessions to digest (taking up to %d this cycle)", len(idle_sessions), cap)
+        idle_sessions = idle_sessions[:cap] if cap > 0 else idle_sessions
         digested = 0
 
         for session in idle_sessions:
@@ -221,6 +234,7 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
                     "is_idle": True,
                 })
 
+    candidates.sort(key=_mtime, reverse=True)  # newest first
     total = len(candidates)
     if total == 0:
         print("No pending sessions to digest.")

@@ -140,8 +140,9 @@ graph_backend   = "age"                 # age (default) | falkordb | none
 [watcher]
 poll_interval   = 60                    # scan every 60s
 idle_threshold  = 300                   # 5 min idle = ready to digest
-min_messages    = 5                     # skip tiny sessions
-skip_cron       = true                  # don't digest automated sessions
+min_messages    = 2                     # a question + its answer is enough
+max_digest_per_cycle = 20               # newest first; backlogs drain gradually
+skip_cron       = true                  # don't digest automated sessions (by source metadata)
 
 [curator]
 curate_interval = 1800                  # regenerate whisper.md every 30 min
@@ -195,6 +196,25 @@ skwhisper status                    # session breakdown + daemon health + top to
 skwhisper patterns [--json]         # hot topics / repeated questions / entities
 skwhisper install [--agent X] [--start]   # write + enable the systemd template
 ```
+
+## Hermes sessions (state.db bridge)
+
+Current Hermes no longer writes `~/.hermes/sessions/<id>.jsonl`; conversations live only in
+`~/.hermes/state.db`, which the watcher cannot read. `scripts/hermes-session-export.py` reads
+state.db read-only and writes one append-only `<session_id>.jsonl` per conversation (cron and
+subagent sessions skipped) into the agent's `sessions_dir`. Install it with the units in `deploy/`:
+
+```
+install -m755 scripts/hermes-session-export.py ~/.local/bin/hermes-session-export
+cp deploy/hermes-session-export@.{service,timer} ~/.config/systemd/user/
+systemctl --user enable --now hermes-session-export@<agent>.timer
+```
+
+Exported files carry a `session_meta` header with the Hermes `source`; the watcher classifies
+cron/subagent/oneshot sessions by that, never by length, so short real chats are digested. The
+exporter never overwrites a transcript it did not write (e.g. Hermes' own pre-state.db JSONL), so
+`sessions_dir` may be a symlink to `~/.hermes/sessions`. For a backlog, run it once with
+`--since-days 180`; the daemon then digests newest first, `max_digest_per_cycle` per cycle.
 
 ## Runtime state (per agent)
 
