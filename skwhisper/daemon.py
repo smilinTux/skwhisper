@@ -90,12 +90,20 @@ async def digest_session(
         )
 
         # 9. Embed (bge-legal-v2, 1024-dim) and upsert to local pg memories table
+        #
+        # The pg row must carry EXACTLY the content written to the flat file.
+        # This used to send content[:2000], so every digest longer than 2000
+        # chars landed in pg cut short while its flat file stayed complete.
+        # skmemory's reconcile then reads the row as stale (title+content hash
+        # differs from flat) on every run, and search served the truncated
+        # text. Found 2026-10-28 on nor: 266 lumina rows, all source=skwhisper,
+        # all exactly 2000 chars. Only the EMBEDDING input is bounded.
         vector = await qdrant.embed(summary[:800])
         await qdrant.upsert(
             vector=vector,
             payload={
                 "title": title,
-                "content": content[:2000],
+                "content": content,
                 "tier": "short-term",
                 "tags": tags,
                 "created_at": datetime.now(timezone.utc).isoformat(),
