@@ -44,6 +44,7 @@ def test_long_digest_reaches_pg_untruncated(monkeypatch):
 
     class Cfg:
         skip_cron = False
+        min_transcript_chars = 0  # this test is about pg content, not the empty guard
         user_label = "User"
         agent_label = "Agent"
         state_dir = "x"
