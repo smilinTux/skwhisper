@@ -51,6 +51,8 @@ DEFAULTS = {
     "idle_threshold": 300,
     # A quick question and its answer (2 messages) is a real conversation.
     "min_messages": 2,
+    # Below this many characters of real text there is nothing to digest.
+    "min_transcript_chars": 80,
     # Digest at most this many sessions per poll cycle, newest first, so a
     # backlog drains gradually instead of saturating the summarizer.
     "max_digest_per_cycle": 20,
