@@ -11,6 +11,8 @@ _AGENT = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "lum
 # Defaults — all agent-specific paths use _AGENT.
 # Sessions live under the sovereign agent home; sources (Claude Code, Hermes,
 # OpenClaw, etc.) symlink or write into ~/.skcapstone/agents/{agent}/sessions/.
+# Vector store is local Postgres+pgvector (see clients/pgmem.py); qdrant/falkordb
+# are retired (douno cluster) and read from env only if ever revived.
 DEFAULTS = {
     "agent_name": _AGENT,
     "sessions_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "sessions",
@@ -19,12 +21,19 @@ DEFAULTS = {
     "ollama_url": "http://192.168.0.100:11434",
     "embed_model": "mxbai-embed-large",
     "summarize_model": "llama3.2:3b",
-    "qdrant_url": "https://skvector.skstack01.douno.it",
-    "qdrant_api_key": "e4hPZkg0Q899N7x0FmgNPT+s8QvY7a/LOnl0go1QCIQ",
+    # Vector backend selection: "pgvector" (default) | "qdrant" | "chromadb"
+    "vector_backend": os.environ.get("SKMEMORY_VECTOR_BACKEND", "pgvector"),
+    "qdrant_url": os.environ.get("SKVECTOR_URL", ""),
+    "qdrant_api_key": os.environ.get("SKVECTOR_API_KEY", ""),
     "qdrant_collection": f"{_AGENT}-memory",
+    # Graph backend selection: "age" (Postgres/Apache AGE, default) | "falkordb" | "none"
+    "graph_backend": os.environ.get("SKMEMORY_GRAPH_BACKEND", "age"),
+    "pg_dsn": os.environ.get("SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory"),
     "falkordb_host": "192.168.0.59",
     "falkordb_port": 16379,
     "falkordb_graph": f"{_AGENT}_knowledge",
+    "user_label": "Casey",
+    "agent_label": _AGENT.capitalize(),
     "poll_interval": 60,
     "idle_threshold": 300,
     "min_messages": 5,
@@ -79,8 +88,17 @@ _config: Config | None = None
 def get_config(path: str | Path | None = None) -> Config:
     global _config
     if _config is None:
-        default_path = Path.home() / "clawd" / "projects" / "skwhisper" / "config" / "skwhisper.toml"
-        _config = Config(path or default_path)
+        # Search order: explicit path > XDG config > skcapstone config > legacy
+        candidates = [
+            Path.home() / ".skcapstone" / "agents" / _AGENT / "config" / "skwhisper.toml",
+            Path.home() / ".config" / "skwhisper" / "skwhisper.toml",
+            Path.home() / ".skcapstone" / "config" / "skwhisper.toml",
+        ]
+        if path:
+            default_path = Path(path)
+        else:
+            default_path = next((p for p in candidates if p.exists()), candidates[0])
+        _config = Config(default_path)
     return _config
 
 
