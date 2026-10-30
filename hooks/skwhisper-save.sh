@@ -1,44 +1,28 @@
 #!/usr/bin/env bash
-# SKWhisper Session Save Hook for Claude Code (Linux / macOS)
-# Triggers SKWhisper digest after session ends to capture new conversation.
+# SKWhisper session save hook: digest + curate after a session ends.
 #
-# Hook type: SessionEnd
-# Input (stdin): JSON with session_id, reason
-# Exit 0 always — never block session end
-set -euo pipefail
+# skmemory >= the `skmemory hook` release already triggers this digest from
+# its session-end hook, so `skmemory hooks install` removes this entry.
+#
+# Hook type: SessionEnd. Exit 0 always, never blocks session end.
+set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_resolve.sh"
 
-AGENT="${SKCAPSTONE_AGENT:-lumina}"
-SKWHISPER_DIR=""
+cat >/dev/null  # drain stdin JSON
+[[ ${#SKWHISPER_CMD[@]} -eq 0 || -z "$AGENT" ]] && exit 0
 
-for D in "${HOME}/clawd/projects/skwhisper" "${HOME}/projects/skwhisper" "${HOME}/skwhisper"; do
-  [ -f "${D}/skwhisper/__main__.py" ] && SKWHISPER_DIR="$D" && break
-done
-
-[ -z "$SKWHISPER_DIR" ] && exit 0
-
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown")
-REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
-SHORT_SID="${SESSION_ID:0:8}"
-
-# Fire-and-forget a SINGLE digest cycle, fully detached. Three guards prevent
-# the pile-up that wedged sessions on close (2026-06-17):
-#   - flock -n  : single-flight. If a digest is already running for this agent,
-#                 skip this cycle instead of stacking another concurrent one.
-#   - timeout   : a wedged Ollama call can't hang forever (digest 180s, curate 120s).
-#   - setsid + </dev/null >/dev/null 2>&1 : fully detach so we DON'T inherit
-#                 Claude Code's stdout pipe — holding it open was what made the
-#                 session "hang" on close until the digest finished.
-LOCK="/tmp/skwhisper-digest-${AGENT}.lock"
+# Fire-and-forget a SINGLE digest cycle, fully detached (2026-06-17 lessons):
+#   flock -n : single-flight per agent, skip instead of stacking digests
+#   timeout  : a wedged embed/LLM call cannot hang forever
+#   setsid + redirects : do not inherit the harness stdout pipe
+LOCK="${TMPDIR:-/tmp}/skwhisper-digest-${AGENT}.lock"
 DETACH=""; command -v setsid >/dev/null 2>&1 && DETACH="setsid"
 $DETACH bash -c '
-  exec 9>"$0" || exit 0
-  flock -n 9 || exit 0          # another digest already running for this agent — skip
-  cd "$1" || exit 0
-  export PYTHONPATH="$1"
+  exec 9>"$1" || exit 0
+  flock -n 9 || exit 0
+  shift
   TO=""; command -v timeout >/dev/null 2>&1 && TO="timeout"
-  ${TO:+$TO 180} python3 -m skwhisper digest
-  ${TO:+$TO 120} python3 -m skwhisper curate
-' "$LOCK" "$SKWHISPER_DIR" </dev/null >/dev/null 2>&1 &
-
+  ${TO:+$TO 180} "$@" digest
+  ${TO:+$TO 120} "$@" curate
+' _ "$LOCK" "${SKWHISPER_CMD[@]}" </dev/null >/dev/null 2>&1 &
 exit 0
