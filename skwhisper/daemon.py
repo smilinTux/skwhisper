@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -14,6 +15,29 @@ from .clients.factory import make_vector_client, make_graph_writer
 from .clients.skmemory import SKMemoryWriter
 
 log = logging.getLogger("skwhisper")
+
+# Openings that mean the summarizer refused or found nothing to digest. Matched only
+# against the start of the summary so a real digest that mentions "sorry" survives.
+_NON_DIGEST_RE = re.compile(
+    r"^\W*(?:#+[^\n]*\n+)?(?:\*\*[^*]*\*\*:?\s*)?(?:"
+    r"I(?:'m| am) sorry|I apologi[sz]e|I can(?:not|'t)\b|I(?:'m| am) (?:not able|unable)|I won't"
+    r"|I need to be honest|I notice this transcript"
+    r"|No (?:substantive|digestable|digestible|meaningful)\b|No conversation (?:occurred|took place)"
+    r"|(?:The )?(?:provided |conversation )*transcript (?:is )?(?:too brief|extremely brief|empty|missing)"
+    r"|The (?:provided )?(?:conversation )?(?:transcript )?contains no substantive"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def is_non_digest(summary: str) -> bool:
+    """True when a summary is a refusal, apology or 'nothing to digest' note."""
+    return bool(_NON_DIGEST_RE.match(summary.strip()[:400]))
+
+
+def transcript_chars(messages: list[dict]) -> int:
+    """Characters of actual text across messages, ignoring whitespace-only turns."""
+    return sum(len((m.get("text") or "").strip()) for m in messages)
 
 
 async def digest_session(
@@ -40,6 +64,13 @@ async def digest_session(
             mark_digested(config, session_id, session["new_offset"], session_type="cron-skipped")
             return True
 
+        # 1c. An empty or near-empty transcript makes the summarizer apologize, and
+        # that apology used to be saved as a memory. Skip it before the model call.
+        if transcript_chars(messages) < config.min_transcript_chars:
+            log.info("Skipping near-empty session %s", session_id[:12])
+            mark_digested(config, session_id, session["new_offset"], session_type="empty-skipped")
+            return True
+
         # 2. Format messages for summarization
         text = format_messages_for_summary(messages, user_label=config.user_label, agent_label=config.agent_label)
 
@@ -48,6 +79,11 @@ async def digest_session(
         if not summary or len(summary) < 20:
             log.warning("Summary too short for session %s, skipping", session_id[:12])
             return False
+        if is_non_digest(summary):
+            # Refusals stay marked so a later pass with another model can find them.
+            log.warning("Summarizer refused or found nothing for session %s, not storing", session_id[:12])
+            mark_digested(config, session_id, session["new_offset"], session_type="refusal-skipped")
+            return True
 
         # 4. Extract structured topics
         extracted = await ollama.extract_topics(summary)
