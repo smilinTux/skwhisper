@@ -72,9 +72,12 @@ function Add-HookEntry {
     Write-Host "✓ Added SKWhisper hook to $HookType" -ForegroundColor Green
 }
 
-Add-HookEntry -HookType "SessionStart" -Command $InjectCmd -Timeout 15 -Matcher ""
+# skmemory's budgeted ritual already injects a distilled whisper.md; only add
+# skwhisper's own inject hook when asked (standalone skwhisper, no skmemory).
 Add-HookEntry -HookType "SessionEnd"   -Command $SaveCmd   -Timeout 30 -Matcher ""
-Add-HookEntry -HookType "PreCompact"   -Command $InjectCmd -Timeout 15 -Matcher ""
+if ($args -contains "-WithInject") {
+    Add-HookEntry -HookType "SessionStart" -Command $InjectCmd -Timeout 15 -Matcher ""
+}
 
 # Save
 $Settings | ConvertTo-Json -Depth 10 | Set-Content $ClaudeSettings -Encoding UTF8

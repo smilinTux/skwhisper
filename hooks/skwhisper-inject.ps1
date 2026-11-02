@@ -8,7 +8,8 @@
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$Agent = if ($env:SKCAPSTONE_AGENT) { $env:SKCAPSTONE_AGENT } else { "lumina" }
+$Agent = @($env:SKAGENT, $env:SKCAPSTONE_AGENT, $env:SKMEMORY_AGENT, "lumina") | Where-Object { $_ } | Select-Object -First 1
+$SkWhisperExe = (Get-Command skwhisper -ErrorAction SilentlyContinue).Source
 $WhisperFile = Join-Path $env:USERPROFILE ".skcapstone" "agents" $Agent "skwhisper" "whisper.md"
 
 # Search for skwhisper project
@@ -26,7 +27,10 @@ foreach ($D in $SearchPaths) {
 }
 
 # Refresh if stale (>2h)
-if ((Test-Path $WhisperFile) -and $SkWhisperDir) {
+if ((Test-Path $WhisperFile) -and $SkWhisperExe) {
+    $FileAge = (New-TimeSpan -Start (Get-Item $WhisperFile).LastWriteTime -End (Get-Date)).TotalSeconds
+    if ($FileAge -gt 7200) { Start-Process -WindowStyle Hidden -FilePath $SkWhisperExe -ArgumentList "curate" }
+} elseif ((Test-Path $WhisperFile) -and $SkWhisperDir) {
     $FileAge = (New-TimeSpan -Start (Get-Item $WhisperFile).LastWriteTime -End (Get-Date)).TotalSeconds
     if ($FileAge -gt 7200) {
         Start-Process -NoNewWindow -FilePath "python" -ArgumentList "-m", "skwhisper", "curate" -WorkingDirectory $SkWhisperDir -RedirectStandardOutput "NUL" -RedirectStandardError "NUL"

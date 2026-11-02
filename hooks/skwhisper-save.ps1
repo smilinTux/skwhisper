@@ -7,7 +7,8 @@
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$Agent = if ($env:SKCAPSTONE_AGENT) { $env:SKCAPSTONE_AGENT } else { "lumina" }
+$Agent = @($env:SKAGENT, $env:SKCAPSTONE_AGENT, $env:SKMEMORY_AGENT, "lumina") | Where-Object { $_ } | Select-Object -First 1
+$SkWhisperExe = (Get-Command skwhisper -ErrorAction SilentlyContinue).Source
 
 $SkWhisperDir = $null
 $SearchPaths = @(
@@ -22,6 +23,11 @@ foreach ($D in $SearchPaths) {
     }
 }
 
+if ($SkWhisperExe) {
+    Start-Process -WindowStyle Hidden -FilePath $SkWhisperExe -ArgumentList "digest"
+    Start-Process -WindowStyle Hidden -FilePath $SkWhisperExe -ArgumentList "curate"
+    exit 0
+}
 if (-not $SkWhisperDir) { exit 0 }
 
 # Run digest + curate in background
