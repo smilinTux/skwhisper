@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import tomllib
+import logging
 import os
 
 from .pgdsn import resolve_dsn
@@ -15,6 +16,8 @@ _AGENT = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "lum
 # OpenClaw, etc.) symlink or write into ~/.skcapstone/agents/{agent}/sessions/.
 # Vector store is local Postgres+pgvector (see clients/pgmem.py). The pg DSN is
 # NOT a config key: it resolves from the canonical env only (see pgdsn.py).
+log = logging.getLogger("skwhisper.config")
+
 DEFAULTS = {
     "agent_name": _AGENT,
     "sessions_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "sessions",
@@ -68,6 +71,7 @@ DEFAULTS = {
 
 
 class Config:
+    _warned_dsn = False
     """Runtime configuration loaded from TOML or defaults."""
 
     def __init__(self, config_path: str | Path | None = None):
@@ -87,6 +91,10 @@ class Config:
                 flat.update(section)
         for k, v in flat.items():
             if k in flat_skip:
+                if not Config._warned_dsn:
+                    Config._warned_dsn = True
+                    log.warning("pg_dsn in the skwhisper TOML is ignored; "
+                                "the DSN comes from SKMEMORY_PG_DSN / environment.d/skmemory.conf")
                 continue
             if k in self._data:
                 if isinstance(self._data[k], Path):

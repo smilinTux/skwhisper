@@ -56,9 +56,9 @@ async def curate_context(config: Config) -> str:
                 log.info("Searching local pg (hybrid vec+BM25) for relevant memories...")
                 results = await pgmem.search(embed_text, vector, top_k=config.top_k)
                 log.info("Found %d relevant memories", len(results))
-                health.record(config.state_dir, "vector", True)
+                health.record(config.state_dir, "vector_read", True)
             except Exception as e:
-                health.record(config.state_dir, "vector", False, f"semantic feed failed: {e}")
+                health.record(config.state_dir, "vector_read", False, f"semantic feed failed: {e}")
                 log.warning("Semantic feed (skmem-pg) unavailable (%s) — "
                             "whisper from recency + patterns only", e)
         else:

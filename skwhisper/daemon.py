@@ -58,12 +58,12 @@ async def _vector_write(config, vec, embed_text, payload, point_id) -> bool:
         ok = await vec.upsert(vector=vector, payload=payload, point_id=point_id)
     except Exception as e:
         log.error("vector write failed: %s", e)
-        health.record(config.state_dir, "vector", False, f"vector write failed: {e}")
+        health.record(config.state_dir, "vector_write", False, f"vector write failed: {e}")
         return False
     if not ok:
-        health.record(config.state_dir, "vector", False, "pgvector upsert failed (see daemon log)")
+        health.record(config.state_dir, "vector_write", False, "pgvector upsert failed (see daemon log)")
         return False
-    health.record(config.state_dir, "vector", True)
+    health.record(config.state_dir, "vector_write", True)
     return True
 
 

@@ -13,7 +13,11 @@ from .pgdsn import redact
 
 log = logging.getLogger("skwhisper.health")
 _FILE = "health.json"
-_LABEL = {"graph": "GRAPH DEGRADED", "vector": "VECTOR DEGRADED"}
+_LABEL = {
+    "graph": "GRAPH DEGRADED",
+    "vector_write": "VECTOR DEGRADED (write)",
+    "vector_read": "VECTOR DEGRADED (read)",
+}
 
 
 def _load(state_dir) -> dict:

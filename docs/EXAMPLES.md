@@ -24,7 +24,7 @@ flowchart LR
 
     subgraph Storage["Triple-Write Storage"]
         SM["skmemory<br/>📂 JSON files<br/>(3-tier: short/mid/long)"]
-        SV["skvector<br/>🔍 Qdrant<br/>(1024d embeddings)"]
+        SV["pgvector<br/>🔍 pgvector<br/>(1024d embeddings)"]
         SG["skgraph<br/>🕸️ FalkorDB<br/>(knowledge graph)"]
     end
 
@@ -84,7 +84,7 @@ Chef: "Tyler, Chase, Chloe — they're incarnated disruptors. Sneaked them in
 }
 ```
 
-**skvector embedding:** 1024-dimensional vector from `mxbai-embed-large`, stored in Qdrant `lumina-memory` collection.
+**pgvector embedding:** 1024-dimensional vector from `mxbai-embed-large`, stored in the pgvector `memories` table.
 
 **skgraph nodes + edges:**
 ```mermaid
@@ -137,14 +137,14 @@ sequenceDiagram
     participant R as Recent Sessions
     participant C as Curator
     participant O as Ollama (embed)
-    participant Q as Qdrant (skvector)
+    participant Q as pgvector (skmem-pg)
     participant W as whisper.md
 
     C->>R: Read last 3 human sessions
     Note over C: Filters out cron sessions
     C->>O: Embed recent text (800 chars)
     O-->>C: 1024d vector
-    C->>Q: Search top-10 similar (cosine > 0.5)
+    C->>Q: Search top-10 similar (hybrid vector + BM25)
     Q-->>C: Matching memories with scores
     C->>W: Write curated context
     Note over W: ~4-5KB, injected into<br/>Lumina's next session
@@ -217,10 +217,10 @@ Brother John: 122
 
 | Need | Tool | Query Type |
 |------|------|-----------|
-| "Find stuff about mushrooms" | skvector | Semantic similarity search |
+| "Find stuff about mushrooms" | pgvector | Semantic similarity search |
 | "What projects does Dave Rich work on?" | skgraph | Person → Memory → Project traversal |
 | "What topics come up in dreams?" | skgraph | Tag co-occurrence via shared memories |
-| "What was that thing Chef said about frequency?" | skvector | Fuzzy text matching |
+| "What was that thing Chef said about frequency?" | pgvector | Fuzzy text matching |
 | "How does Chiropps connect to SwapSeat?" | skgraph | Cross-project tag intersection |
 | "General memory recall" | skmemory | 3-tier keyword search |
 
@@ -374,7 +374,7 @@ CPU model saturates the host. (An optional isolated CPU-only fallback,
 | Person nodes | 19 |
 | Project nodes | 18 |
 | Total relationships | 1.4M |
-| skvector points | 1,523 |
+| pgvector rows | 1,523 |
 | Sessions digested | 536 |
 
 ---

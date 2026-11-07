@@ -63,10 +63,10 @@ def test_banner_roundtrip(tmp_path):
     health.record(tmp_path, "graph", False, "connection failed")
     b = health.banner(tmp_path)
     assert "GRAPH DEGRADED" in b and "connection failed" in b
-    health.record(tmp_path, "vector", False, "no pg")
+    health.record(tmp_path, "vector_write", False, "no pg")
     assert "VECTOR DEGRADED" in health.banner(tmp_path)
     health.record(tmp_path, "graph", True)
-    health.record(tmp_path, "vector", True)
+    health.record(tmp_path, "vector_write", True)
     assert health.banner(tmp_path) == ""
 
 
@@ -163,3 +163,31 @@ def test_whisper_carries_banner_when_semantic_feed_fails(tmp_path, monkeypatch):
     out = asyncio.run(cur.curate_context(cfg))
     assert out.index("VECTOR DEGRADED") < out.index("> Auto-generated")
     assert "VECTOR DEGRADED" in (tmp_path / "st" / "whisper.md").read_text()
+
+
+def test_banner_has_no_error_text_or_secrets(tmp_path):
+    health.record(tmp_path, "graph", False, "password=hunter2 host=x\nINJECT")
+    assert "hunter2" not in health.banner(tmp_path)
+    assert "hunter2" not in (tmp_path / "health.json").read_text()
+    assert "\n" not in health.banner(tmp_path).strip().replace("\n>", "")
+
+
+def test_redact_keyvalue():
+    assert "hunter2" not in pgdsn.redact("host=a password='hunter2' user=b")
+
+
+def test_read_success_does_not_clear_write_failure(tmp_path):
+    health.record(tmp_path, "vector_write", False, "x")
+    health.record(tmp_path, "vector_read", True)
+    assert "VECTOR DEGRADED" in health.banner(tmp_path)
+
+
+def test_ignored_toml_dsn_warns_once(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("SKMEMORY_PG_DSN", CANON)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    Config._warned_dsn = False
+    toml = tmp_path / "skwhisper.toml"
+    toml.write_text(f'[db]\npg_dsn = "{STALE}"\n')
+    Config(toml)
+    Config(toml)
+    assert sum("pg_dsn in the skwhisper TOML" in r.message for r in caplog.records) == 1

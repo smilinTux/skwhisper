@@ -188,7 +188,7 @@ flowchart TD
 The default path (**pgvector + AGE**) lands every digest into the one local
 `skmem-pg` Postgres: vectors via pgvector, keyword matching via pg_search BM25
 (fused with vectors through Reciprocal Rank Fusion at curate time), and a knowledge
-graph via Apache AGE — no external cluster required. FalkorDB remains selectable
+graph via Apache AGE, no external cluster required. FalkorDB remains selectable
 for installs that still front a remote vector/graph cluster.
 
 > **Embedding model contract:** digests are embedded with `mxbai-embed-large`
@@ -306,7 +306,7 @@ flowchart TD
    naturally via skmemory's existing promotion, rather than guessing tier on ingest.
 4. **File-based briefing** — `whisper.md` is a plain Markdown file any process (the
    ritual, a hook, a human) can read. Dead-simple integration boundary.
-5. **Pluggable backends behind one interface** — pgvector and
+5. **Pluggable backends behind one interface:** pgvector and
    AGE/falkordb/none are swappable without touching the daemon, so the same code runs
    personal (one Postgres) or fleet (remote cluster).
 6. **Human-first curation** — cron/automation sessions are classified and

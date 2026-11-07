@@ -42,5 +42,11 @@ def resolve_dsn(conf_path: Path | None = None) -> str:
 
 
 def redact(text: str) -> str:
-    """Strip any user:password@ credentials from a message."""
-    return re.sub(r"(\w+://[^:/\s@]+):[^@\s]*@", r"\1:***@", str(text))
+    """Strip credentials (URL and libpq key=value forms) and newlines."""
+    t = re.sub(r"(\w+://[^:/\s@]+):[^@\s]*@", r"\1:***@", str(text))
+    t = re.sub(
+        r"(?i)\b(password|passwd|pwd|pass|secret|token|api_?key)\s*=\s*('[^']*'|\"[^\"]*\"|\S+)",
+        r"\1=***",
+        t,
+    )
+    return " ".join(t.split())
