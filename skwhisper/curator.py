@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 
 from .clients.factory import make_vector_client
 from .clients.sqlite_recency import SQLiteRecencyClient
-from .patterns import load_patterns, get_hot_topics, get_repeated_questions
+from .patterns import (
+    load_patterns,
+    get_hot_topics,
+    get_repeated_questions,
+    get_sensitive_people,
+)
+from .sensitivity import is_sensitive, normalize
 from .watcher import extract_messages
 from .config import Config
 from . import health
@@ -41,8 +47,14 @@ async def curate_context(config: Config) -> str:
         # 1. Gather recent conversation context (anchor for semantic search)
         recent_text = _get_recent_context(config)
         # 4. Pattern data (from local state files — no pg dependency)
-        hot_topics = get_hot_topics(config.state_dir, top_n=10, session_type="human")
+        hot_topics = get_hot_topics(config.state_dir, top_n=1000, session_type="human")
         repeated_qs = get_repeated_questions(config.state_dir, min_count=2)
+        sens_sessions, sens_tags = SQLiteRecencyClient(
+            config.memory_dir / "index.db"
+        ).sensitive_digest_refs()
+        sens_names = _sensitive_names(config, sens_tags)
+        hot_topics = _drop_sensitive_topics(hot_topics, sens_sessions, sens_names)[:10]
+        repeated_qs = _drop_sensitive_questions(repeated_qs, sens_names)
 
         # 2–3. Semantic feed (skmem-pg). Best-effort: if pg/embed is unreachable we
         # STILL write whisper from the recency feed + patterns — resilience is the point
@@ -65,7 +77,9 @@ async def curate_context(config: Config) -> str:
             log.info("No recent conversation context — semantic feed skipped")
 
         # 5. Build whisper (recency + semantic + patterns)
-        whisper = _build_whisper(config, results, hot_topics, repeated_qs, [], recent_memories)
+        whisper = _build_whisper(
+            config, results, hot_topics, repeated_qs, [], recent_memories, sens_names
+        )
         warn = health.banner(config.state_dir)
         if warn:
             head, sep, rest = whisper.partition("\n\n> Auto-generated")
@@ -80,6 +94,39 @@ async def curate_context(config: Config) -> str:
 
     finally:
         await pgmem.close()
+
+
+def _name_keys(names) -> set[str]:
+    return {k for k in (normalize(n) for n in names) if len(k) >= 3}
+
+
+def _sensitive_names(config: Config, sens_tags: set[str]) -> set[str]:
+    """Normalized people names that must never reach whisper.md.
+
+    A name is sensitive when it was seen in a sensitive digest, or when it equals a
+    tag of any sensitive-tagged memory (digests tag people as ``first-last``).
+    """
+    people = load_patterns(config.state_dir).get("entities", {}).get("people", {})
+    names = set(get_sensitive_people(config.state_dir))
+    names.update(p for p in people if is_sensitive([p]) or normalize(p) in sens_tags)
+    return _name_keys(names)
+
+
+def _mentions(text: str, name_keys: set[str]) -> bool:
+    n = normalize(text)
+    return is_sensitive([text]) or any(k in n for k in name_keys)
+
+
+def _drop_sensitive_topics(topics: list[dict], sessions: set[str], name_keys: set[str]) -> list[dict]:
+    return [
+        t
+        for t in topics
+        if not (set(t.get("sessions", [])) & sessions) and not _mentions(t["topic"], name_keys)
+    ]
+
+
+def _drop_sensitive_questions(questions: list[dict], name_keys: set[str]) -> list[dict]:
+    return [q for q in questions if not _mentions(q["question"], name_keys)]
 
 
 def _is_cron_session(path: Path) -> bool:
@@ -160,6 +207,7 @@ def _build_whisper(
     repeated_questions: list[dict],
     suggestions: list[str],
     recent_memories: list[dict] | None = None,
+    sensitive_names: set[str] | None = None,
 ) -> str:
     """Build the whisper.md content."""
     recent_memories = recent_memories or []
@@ -221,7 +269,12 @@ def _build_whisper(
 
     # Patterns summary
     patterns = load_patterns(config.state_dir)
-    people = patterns.get("entities", {}).get("people", {})
+    people = {
+        n: c
+        for n, c in patterns.get("entities", {}).get("people", {}).items()
+        if not _mentions(n, sensitive_names or set())
+        and normalize(n) not in (sensitive_names or set())
+    }
     if people:
         top_people = sorted(people.items(), key=lambda x: x[1], reverse=True)[:10]
         lines.append("## Frequently Mentioned People")

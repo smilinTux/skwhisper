@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
+from .sensitivity import is_sensitive
+
 log = logging.getLogger("skwhisper.patterns")
 
 
@@ -37,6 +39,7 @@ def update_patterns(
     session_id: str,
     extracted: dict,
     session_type: str = "human",
+    digest_tags: list[str] | None = None,
 ) -> dict:
     """
     Update patterns with extracted data from a digested session.
@@ -44,6 +47,19 @@ def update_patterns(
     `session_type` is 'human' or 'cron', used to track topic origin.
     """
     patterns = load_patterns(state_dir)
+    if digest_tags is not None and is_sensitive(digest_tags):
+        # A sensitive digest (its tags carry a sacred/grief/medical/... stem) feeds
+        # no topic, question or people count: whisper.md is read at every session
+        # start. Its people are remembered so the same name from an ordinary
+        # digest is dropped at curation time too.
+        sp = patterns.setdefault("sensitive_people", [])
+        for person in extracted.get("people", []):
+            person = person.strip()
+            if person and person not in sp:
+                sp.append(person)
+        save_patterns(state_dir, patterns)
+        log.info("Sensitive digest %s: kept out of patterns", session_id[:12])
+        return patterns
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     type_count_key = f"{session_type}_count"
 
@@ -142,6 +158,7 @@ def get_hot_topics(state_dir: Path, top_n: int = 10, session_type: str | None = 
             "count": count,
             "first": v.get("first"),
             "last": v.get("last"),
+            "sessions": list(v.get("sessions", [])),
         })
     topics.sort(key=lambda t: t["count"], reverse=True)
     return topics[:top_n]
@@ -155,3 +172,13 @@ def get_repeated_questions(state_dir: Path, min_count: int = 2) -> list[dict]:
         for k, v in patterns.get("questions", {}).items()
         if v["count"] >= min_count
     ]
+
+
+def get_people(state_dir: Path) -> dict[str, int]:
+    """People mention counts (name -> count)."""
+    return dict(load_patterns(state_dir).get("entities", {}).get("people", {}))
+
+
+def get_sensitive_people(state_dir: Path) -> list[str]:
+    """Names seen in sensitive digests (recorded by update_patterns)."""
+    return list(load_patterns(state_dir).get("sensitive_people", []))

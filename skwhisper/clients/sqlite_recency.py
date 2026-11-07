@@ -69,3 +69,33 @@ class SQLiteRecencyClient:
         except sqlite3.Error as e:
             log.warning("SQLite recency read failed (%s) — continuing without recency feed", e)
             return []
+
+    def sensitive_digest_refs(self) -> tuple[set[str], set[str]]:
+        """Return ``(session_ids, tags)`` taken from sensitive-tagged memories.
+
+        ``session_ids`` are the sessions behind sensitive digests (``source_ref``
+        ``session:<id>@a-b``). ``tags`` are every normalized tag on any sensitive
+        memory, so a person tag such as ``jane-doe`` on a sacred memory marks that
+        name sensitive. Returns empty sets (never raises) if the index is unreadable.
+        """
+        from ..sensitivity import normalize
+
+        sessions: set[str] = set()
+        tags: set[str] = set()
+        if not self.index_db.exists():
+            return sessions, tags
+        try:
+            conn = sqlite3.connect(f"file:{self.index_db}?mode=ro", uri=True, timeout=5)
+            try:
+                for row_tags, ref in conn.execute("SELECT tags, source_ref FROM memories"):
+                    if not csv_is_sensitive(row_tags):
+                        continue
+                    tags.update(n for n in (normalize(t) for t in str(row_tags).split(",")) if n)
+                    ref = str(ref or "")
+                    if ref.startswith("session:"):
+                        sessions.add(ref[len("session:") :].split("@", 1)[0])
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            log.warning("SQLite sensitive scan failed (%s)", e)
+        return sessions, tags
