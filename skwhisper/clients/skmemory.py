@@ -25,6 +25,7 @@ class SKMemoryWriter:
         emotions: list[str] | None = None,
         intensity: float = 5.0,
         source: str = "skwhisper",
+        source_ref: str = "skwhisper-daemon",
     ) -> str:
         """Write a memory snapshot to short-term storage. Returns the memory ID."""
         mem_id = str(uuid.uuid4())
@@ -41,7 +42,7 @@ class SKMemoryWriter:
             "summary": "",
             "tags": tags or ["skwhisper", "auto-digest"],
             "source": source,
-            "source_ref": "skwhisper-daemon",
+            "source_ref": source_ref,
             "emotional": {
                 "intensity": intensity,
                 "valence": 0.0,

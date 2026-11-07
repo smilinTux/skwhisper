@@ -191,6 +191,7 @@ def _continuation(path: Path, session_id: str, session_state: dict, config: Conf
         "session_id": session_id,
         "messages": messages,
         "new_offset": new_offset,
+        "start_offset": offset,
         "is_idle": True,
         "continuation": True,
     }

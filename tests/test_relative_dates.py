@@ -161,3 +161,42 @@ def test_should_is_not_future():
     assert "on Tuesday (2026-03-10)" in resolve_relative_dates(
         "It should have run on Tuesday.", EVENT
     )
+
+
+def test_digest_source_ref_names_session_and_byte_range(tmp_path, monkeypatch):
+    seen = {}
+
+    class Ollama:
+        async def summarize(self, text):
+            return "We decided to ship the gateway change after review today."
+
+        async def extract_topics(self, summary):
+            return {"topics": ["gateway"], "people": [], "projects": []}
+
+    class Mem:
+        def write_snapshot(self, **kw):
+            seen.update(kw)
+            return "id1"
+
+    class Cfg:
+        skip_cron = False
+        min_transcript_chars = 1
+        user_label, agent_label = "User", "Agent"
+        state_dir = tmp_path
+        sessions_dir = tmp_path
+
+    async def noop(*a, **k):
+        return True
+
+    monkeypatch.setattr(daemon, "_vector_write", noop)
+    monkeypatch.setattr(daemon, "mark_digested", lambda *a, **k: None)
+    monkeypatch.setattr(daemon, "update_patterns", lambda *a, **k: None)
+    session = {
+        "session_id": "20260101_abc",
+        "path": None,
+        "new_offset": 900,
+        "start_offset": 400,
+        "messages": [{"role": "user", "text": "we shipped the gateway change", "timestamp": "2026-01-01T00:00:00Z"}],
+    }
+    asyncio.run(daemon.digest_session(Cfg(), session, Ollama(), None, Mem()))
+    assert seen["source_ref"] == "session:20260101_abc@400-900"
