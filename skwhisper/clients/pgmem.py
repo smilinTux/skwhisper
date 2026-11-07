@@ -1,11 +1,11 @@
 """Local Postgres + pgvector memory client for skwhisper.
 
-Sovereign replacement for the Qdrant (skvector) client: reads/writes the shared
+Sovereign vector client (the only backend): reads/writes the shared
 `memories` table in skmem-pg (.158:5432), embeds via the mxbai-embed-large server
 (.100:11434), and searches via the hybrid (vector + BM25 RRF) SQL function
 `hybrid_search_memories()`. Decoupled — no skmemory import; raw SQL + httpx.
 
-Drop-in shape-compatible with the old QdrantClient:
+Interface:
   - await embed(text) -> list[float]            (mxbai-embed-large, 1024-dim)
   - await search(q_text, q_vec, top_k) -> [{"payload": {...}, "score": float}]
   - await upsert(vector, payload, point_id)
@@ -22,11 +22,10 @@ from datetime import datetime, timezone
 import httpx
 import psycopg
 
+from ..pgdsn import resolve_dsn
+
 log = logging.getLogger("skwhisper.pgmem")
 
-PG_DSN = os.environ.get(
-    "SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory"
-)
 EMBED_URL = os.environ.get(
     "SKMEMORY_EMBED_URL", "http://192.168.0.100:11434/api/embed"  # mxbai (Ollama); was :11435 bge
 )
@@ -36,13 +35,18 @@ EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "mxbai-embed-large")  # was
 class PGMemClient:
     """Hybrid (vector+BM25) memory over local Postgres; bge-legal-v2 embeddings."""
 
-    def __init__(self, dsn: str = PG_DSN, embed_url: str = EMBED_URL,
+    def __init__(self, dsn: str | None = None, embed_url: str = EMBED_URL,
                  embed_model: str = EMBED_MODEL, agent: str | None = None):
-        self.dsn = dsn
+        self._dsn = dsn
         self.embed_url = embed_url
         self.embed_model = embed_model
         self.agent = agent
         self._http: httpx.AsyncClient | None = None
+
+    @property
+    def dsn(self) -> str:
+        # Resolved lazily from the canonical env on every use, never frozen at import.
+        return self._dsn or resolve_dsn()
 
     async def _client(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -147,7 +151,8 @@ class PGMemClient:
         try:
             return await asyncio.to_thread(self._upsert_sync, vector, payload, point_id)
         except Exception as e:
-            log.error("pgmem upsert failed: %s", e)
+            from ..pgdsn import redact
+            log.error("pgmem upsert failed: %s", redact(e))
             return False
 
     async def close(self):

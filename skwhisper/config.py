@@ -2,7 +2,10 @@
 
 from pathlib import Path
 import tomllib
+import logging
 import os
+
+from .pgdsn import resolve_dsn
 
 # Resolve active agent from env. SKAGENT is the primary source of truth
 # (matches skmemory). SKCAPSTONE_AGENT kept for backward compatibility.
@@ -11,8 +14,10 @@ _AGENT = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "lum
 # Defaults — all agent-specific paths use _AGENT.
 # Sessions live under the sovereign agent home; sources (Claude Code, Hermes,
 # OpenClaw, etc.) symlink or write into ~/.skcapstone/agents/{agent}/sessions/.
-# Vector store is local Postgres+pgvector (see clients/pgmem.py); qdrant/falkordb
-# are retired (douno cluster) and read from env only if ever revived.
+# Vector store is local Postgres+pgvector (see clients/pgmem.py). The pg DSN is
+# NOT a config key: it resolves from the canonical env only (see pgdsn.py).
+log = logging.getLogger("skwhisper.config")
+
 DEFAULTS = {
     "agent_name": _AGENT,
     "sessions_dir": Path.home() / ".skcapstone" / "agents" / _AGENT / "sessions",
@@ -31,14 +36,10 @@ DEFAULTS = {
     # Let the summarizer "think" first? Off: digests are extraction, and reasoning
     # models otherwise burn max_tokens on thinking and return no content.
     "summarize_thinking": False,
-    # Vector backend selection: "pgvector" (default) | "qdrant" | "chromadb"
+    # Vector backend is pgvector only (Chroma and Qdrant are retired).
     "vector_backend": os.environ.get("SKMEMORY_VECTOR_BACKEND", "pgvector"),
-    "qdrant_url": os.environ.get("SKVECTOR_URL", ""),
-    "qdrant_api_key": os.environ.get("SKVECTOR_API_KEY", ""),
-    "qdrant_collection": f"{_AGENT}-memory",
     # Graph backend selection: "age" (Postgres/Apache AGE, default) | "falkordb" | "none"
     "graph_backend": os.environ.get("SKMEMORY_GRAPH_BACKEND", "age"),
-    "pg_dsn": os.environ.get("SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory"),
     "falkordb_host": "192.168.0.59",
     "falkordb_port": 16379,
     "falkordb_graph": f"{_AGENT}_knowledge",
@@ -70,6 +71,7 @@ DEFAULTS = {
 
 
 class Config:
+    _warned_dsn = False
     """Runtime configuration loaded from TOML or defaults."""
 
     def __init__(self, config_path: str | Path | None = None):
@@ -83,10 +85,17 @@ class Config:
 
     def _merge(self, toml: dict):
         flat = {}
+        flat_skip = {"pg_dsn"}  # never overridable per agent
         for section in toml.values():
             if isinstance(section, dict):
                 flat.update(section)
         for k, v in flat.items():
+            if k in flat_skip:
+                if not Config._warned_dsn:
+                    Config._warned_dsn = True
+                    log.warning("pg_dsn in the skwhisper TOML is ignored; "
+                                "the DSN comes from SKMEMORY_PG_DSN / environment.d/skmemory.conf")
+                continue
             if k in self._data:
                 if isinstance(self._data[k], Path):
                     self._data[k] = Path(os.path.expanduser(v))
@@ -98,6 +107,8 @@ class Config:
     def __getattr__(self, name):
         if name.startswith("_"):
             return super().__getattribute__(name)
+        if name == "pg_dsn":
+            return resolve_dsn()
         try:
             return self._data[name]
         except KeyError:

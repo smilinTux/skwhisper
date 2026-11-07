@@ -45,15 +45,9 @@ summarize_url = "http://192.168.0.100:8082"  # the qwen3.6 OpenAI-compatible ser
 summarize_api = "openai"                      # "openai" (default) | "ollama" (legacy /api/generate)
 summarize_model = "qwen3.6"
 
-# Vector/graph store = local Postgres + pgvector (see clients/pgmem.py).
-# The douno cluster (qdrant/skvector + FalkorDB/skgraph) is RETIRED — these blocks
-# are dormant fallbacks only; endpoints come from env (SKVECTOR_URL/SKVECTOR_API_KEY)
-# if ever revived.
-[qdrant]
-url = ""
-api_key = ""
-# collection is auto-derived as "{agent}-memory" — override here if needed.
-
+# Vector store = local Postgres + pgvector (see clients/pgmem.py); Chroma and Qdrant
+# are retired. The pg DSN is NOT configured here: it comes from the canonical
+# ~/.config/environment.d/skmemory.conf (a pg_dsn key in this file is ignored).
 [falkordb]
 host = ""
 port = 16379

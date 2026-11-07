@@ -53,11 +53,6 @@ ollama_url = "http://localhost:11434"
 embed_model = "bge-large"
 summarize_model = "llama3.2"
 
-[qdrant]
-qdrant_url = ""
-qdrant_api_key = ""
-qdrant_collection = "$AGENT-memory"
-
 [watcher]
 poll_interval = 60
 idle_threshold = 300
@@ -69,7 +64,7 @@ top_k = 10
 max_whisper_tokens = 2000
 TOML
     echo "  Wrote config: $CONFIG_DIR/skwhisper.toml"
-    echo "  ⚠  Edit $CONFIG_DIR/skwhisper.toml to set your Ollama/Qdrant endpoints."
+    echo "  ⚠  Edit $CONFIG_DIR/skwhisper.toml to set your Ollama endpoints."
 else
     echo "  Config exists: $CONFIG_DIR/skwhisper.toml (skipped)"
 fi

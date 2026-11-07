@@ -10,6 +10,7 @@ from .clients.sqlite_recency import SQLiteRecencyClient
 from .patterns import load_patterns, get_hot_topics, get_repeated_questions
 from .watcher import extract_messages
 from .config import Config
+from . import health
 
 log = logging.getLogger("skwhisper.curator")
 
@@ -55,7 +56,9 @@ async def curate_context(config: Config) -> str:
                 log.info("Searching local pg (hybrid vec+BM25) for relevant memories...")
                 results = await pgmem.search(embed_text, vector, top_k=config.top_k)
                 log.info("Found %d relevant memories", len(results))
+                health.record(config.state_dir, "vector_read", True)
             except Exception as e:
+                health.record(config.state_dir, "vector_read", False, f"semantic feed failed: {e}")
                 log.warning("Semantic feed (skmem-pg) unavailable (%s) — "
                             "whisper from recency + patterns only", e)
         else:
@@ -63,6 +66,10 @@ async def curate_context(config: Config) -> str:
 
         # 5. Build whisper (recency + semantic + patterns)
         whisper = _build_whisper(config, results, hot_topics, repeated_qs, [], recent_memories)
+        warn = health.banner(config.state_dir)
+        if warn:
+            head, sep, rest = whisper.partition("\n\n> Auto-generated")
+            whisper = f"{head}\n\n{warn}\n\n> Auto-generated{rest}"
 
         # 6. Write to file
         whisper_path = config.state_dir / "whisper.md"

@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Removed
+- ChromaDB and Qdrant clients (`clients/chroma.py`, `clients/qdrant.py`) and
+  their config keys. pgvector is the only vector backend; requesting another
+  raises (SKMEM-P5-07).
+
+### Fixed
+- The pg DSN resolves from `SKMEMORY_PG_DSN` / `~/.config/environment.d/skmemory.conf`
+  only. No per-agent `pg_dsn` override and no hardcoded fallback password
+  (SKMEM-P0-13).
+- A failed graph write, an unavailable AGE graph, or a failed vector upsert or
+  search now puts a GRAPH DEGRADED or VECTOR DEGRADED banner at the top of
+  whisper.md instead of regenerating silently (SKMEM-P0-13).
+
 ## [0.6.3] - 2026-10-30
 
 ### Added

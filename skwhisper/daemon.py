@@ -13,6 +13,7 @@ from .patterns import update_patterns
 from .clients.ollama import OllamaClient
 from .clients.factory import make_vector_client, make_graph_writer
 from .clients.skmemory import SKMemoryWriter
+from . import health
 
 log = logging.getLogger("skwhisper")
 
@@ -40,11 +41,37 @@ def transcript_chars(messages: list[dict]) -> int:
     return sum(len((m.get("text") or "").strip()) for m in messages)
 
 
+def _graph_write(config, graph, **kw) -> None:
+    """Write to the graph; a failure is logged loudly and surfaced in whisper.md."""
+    try:
+        graph.write_memory(**kw)
+        health.record(config.state_dir, "graph", True)
+    except Exception as e:
+        log.error("graph write failed for %s: %s", kw.get("session_id", "?")[:12], e)
+        health.record(config.state_dir, "graph", False, f"graph write failed: {e}")
+
+
+async def _vector_write(config, vec, embed_text, payload, point_id) -> bool:
+    """Embed and upsert; a failure is logged loudly and surfaced in whisper.md."""
+    try:
+        vector = await vec.embed(embed_text)
+        ok = await vec.upsert(vector=vector, payload=payload, point_id=point_id)
+    except Exception as e:
+        log.error("vector write failed: %s", e)
+        health.record(config.state_dir, "vector_write", False, f"vector write failed: {e}")
+        return False
+    if not ok:
+        health.record(config.state_dir, "vector_write", False, "pgvector upsert failed (see daemon log)")
+        return False
+    health.record(config.state_dir, "vector_write", True)
+    return True
+
+
 async def digest_session(
     config: Config,
     session: dict,
     ollama: OllamaClient,
-    qdrant,
+    vec,
     memory: SKMemoryWriter,
     graph=None,
 ) -> bool:
@@ -134,10 +161,9 @@ async def digest_session(
         # differs from flat) on every run, and search served the truncated
         # text. Found 2026-10-28 on nor: 266 lumina rows, all source=skwhisper,
         # all exactly 2000 chars. Only the EMBEDDING input is bounded.
-        vector = await qdrant.embed(summary[:800])
-        await qdrant.upsert(
-            vector=vector,
-            payload={
+        await _vector_write(
+            config, vec, summary[:800],
+            {
                 "title": title,
                 "content": content,
                 "tier": "short-term",
@@ -149,7 +175,7 @@ async def digest_session(
                 "session_id": session_id,
                 "session_type": session_type,
             },
-            point_id=mem_id,
+            mem_id,
         )
 
         # 10. Update patterns (pass session type so topics can be split by origin)
@@ -157,19 +183,16 @@ async def digest_session(
 
         # 11. Push to skgraph (FalkorDB) if available
         if graph is not None:
-            try:
-                graph.write_memory(
-                    session_id=session_id,
-                    title=title,
-                    summary=summary,
-                    topics=extracted.get("topics", []),
-                    people=extracted.get("people", []),
-                    projects=extracted.get("projects", []),
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                )
-                log.debug("skgraph: wrote memory for session %s", session_id[:12])
-            except Exception as e:
-                log.warning("skgraph write failed for %s: %s", session_id[:12], e)
+            _graph_write(
+                config, graph,
+                session_id=session_id,
+                title=title,
+                summary=summary,
+                topics=extracted.get("topics", []),
+                people=extracted.get("people", []),
+                projects=extracted.get("projects", []),
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
 
         # 12. Mark as digested (store classification for status reporting)
         mark_digested(config, session_id, session["new_offset"], session_type=session_type)
@@ -192,7 +215,7 @@ def _mtime(session: dict) -> float:
 async def run_digest_cycle(config: Config) -> int:
     """Run one digest cycle. Returns number of sessions digested."""
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model, summarize_url=config.summarize_url, summarize_api=config.summarize_api, summarize_thinking=bool(config.summarize_thinking))
-    qdrant = make_vector_client(config)
+    vec = make_vector_client(config)
     memory = SKMemoryWriter(config.memory_dir)
     graph = make_graph_writer(config)  # AGE (default) / FalkorDB / None per config
 
@@ -212,7 +235,7 @@ async def run_digest_cycle(config: Config) -> int:
         digested = 0
 
         for session in idle_sessions:
-            ok = await digest_session(config, session, ollama, qdrant, memory, graph=graph)
+            ok = await digest_session(config, session, ollama, vec, memory, graph=graph)
             if ok:
                 digested += 1
             # Small delay between sessions to avoid hammering ollama
@@ -222,7 +245,7 @@ async def run_digest_cycle(config: Config) -> int:
 
     finally:
         await ollama.close()
-        await qdrant.close()
+        await vec.close()
         if graph is not None and hasattr(graph, "close"):
             try:
                 graph.close()
@@ -288,7 +311,7 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
     total_batches = (total + batch_size - 1) // batch_size
 
     ollama = OllamaClient(config.ollama_url, config.embed_model, config.summarize_model, summarize_url=config.summarize_url, summarize_api=config.summarize_api, summarize_thinking=bool(config.summarize_thinking))
-    qdrant = make_vector_client(config)
+    vec = make_vector_client(config)
     memory = SKMemoryWriter(config.memory_dir)
     graph = make_graph_writer(config)
 
@@ -302,7 +325,7 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
             for j, session in enumerate(batch, 1):
                 idx = batch_start + j
                 print(f"  [{idx}/{total}] {session['session_id'][:16]}...", end=" ", flush=True)
-                ok = await digest_session(config, session, ollama, qdrant, memory, graph=graph)
+                ok = await digest_session(config, session, ollama, vec, memory, graph=graph)
                 if ok:
                     digested += 1
                     print("✓")
@@ -311,7 +334,7 @@ async def run_backlog_digest(config: Config, batch_size: int = 10) -> int:
                 await asyncio.sleep(1)
     finally:
         await ollama.close()
-        await qdrant.close()
+        await vec.close()
         if graph is not None and hasattr(graph, "close"):
             try:
                 graph.close()

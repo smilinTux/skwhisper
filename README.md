@@ -60,7 +60,7 @@ journalctl --user -u skwhisper@lumina -f
 |---|---|
 | **Transcript watcher** (`watcher.py`) | Polls `~/.skcapstone/agents/<agent>/sessions/*.jsonl`, tracks a byte offset per file in `state.json`, and parses three transcript schemas (Claude Code, OpenClaw, Hermes) into clean conversational turns |
 | **Digest engine** (`daemon.py`) | When a session is idle (≥5 min) with enough messages, summarizes it with the local LLM, extracts topics/people/projects/decisions/mood as JSON, and writes a short-term memory snapshot |
-| **Vector store** (pluggable) | Embeds each digest (`mxbai-embed-large`, 1024-dim) and upserts to the configured backend — **pgvector** (default, local Postgres), **qdrant**, or **chromadb** |
+| **Vector store** (pluggable) | Embeds each digest (`mxbai-embed-large`, 1024-dim) and upserts to the configured backend - **pgvector** (local Postgres) |
 | **Graph writer** (pluggable) | Optionally writes a memory node + topic/people/project edges to a knowledge graph — **Apache AGE** (default, in-Postgres), **falkordb**, or **none** |
 | **Pattern tracker** (`patterns.py`) | Accumulates hot topics, repeated questions, and entity (people/project) mention counts in `patterns.json`, split by session type |
 | **Context curator** (`curator.py`) | Every 30 min: builds a query from recent sessions, runs **hybrid (vector + BM25 RRF)** search over memory, blends in pattern data, and writes `whisper.md` |
@@ -134,7 +134,7 @@ summarize_api   = "openai"                        # "openai" (default) | "ollama
 summarize_model = "qwen3.6"
 
 [backends]
-vector_backend  = "pgvector"            # pgvector (default) | qdrant | chromadb
+vector_backend  = "pgvector"            # pgvector only
 graph_backend   = "age"                 # age (default) | falkordb | none
 
 [watcher]
@@ -240,7 +240,7 @@ exporter never overwrites a transcript it did not write (e.g. Hermes' own pre-st
 - A reachable embed endpoint — Ollama (local or on `192.168.0.100:11434`) serving
   `mxbai-embed-large` — and a summarize endpoint — the qwen3.6-27B OpenAI-compatible
   server on `192.168.0.100:8082` (see *Digest model routing* above)
-- A vector backend: Postgres + pgvector (default), or Qdrant, or ChromaDB
+- A vector backend: Postgres + pgvector
 
 ---
 

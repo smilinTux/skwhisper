@@ -139,8 +139,6 @@ recency feed keeps working when the heavy backend doesn't.
 | `skwhisper/clients/ollama.py` | Async `embed` (`/api/embed` on `ollama_url`) + `summarize` + `extract_topics` (routed to `summarize_url` via `summarize_api`: OpenAI `:8082` or legacy Ollama `/api/generate`) |
 | `skwhisper/clients/pgmem.py` | **Semantic** feed: local Postgres + pgvector + pg_search BM25 hybrid |
 | `skwhisper/clients/sqlite_recency.py` | **Recency** feed: read-only accessor for the newest memories in the skmemory SQLite index (`active_memories` view) |
-| `skwhisper/clients/qdrant.py` | Alternate vector backend: remote Qdrant / skvector |
-| `skwhisper/clients/chroma.py` | Alternate vector backend: local ChromaDB |
 | `skwhisper/clients/agegraph.py` | **Default** graph writer: Apache AGE inside the local Postgres |
 | `skwhisper/clients/skgraph.py` | Alternate graph writer: FalkorDB / skgraph |
 | `skwhisper/clients/skmemory.py` | `SKMemoryWriter` — writes 3-tier JSON snapshots |
@@ -182,8 +180,6 @@ close()
 flowchart TD
     CFG["config: vector_backend / graph_backend<br/>(TOML or env)"] --> FAC["clients/factory.py"]
     FAC -->|"pgvector (default)"| PG["PGMemClient<br/>(Postgres + pgvector + pg_search BM25)"]
-    FAC -->|qdrant| QD["QdrantClient<br/>(remote skvector)"]
-    FAC -->|chromadb| CH["ChromaClient<br/>(local ChromaDB)"]
     FAC -->|"age (default)"| AGE["AGEGraphWriter<br/>(Apache AGE in Postgres)"]
     FAC -->|falkordb| FK["SKGraphWriter<br/>(FalkorDB)"]
     FAC -->|none| OFF["graph writes disabled"]
@@ -192,7 +188,7 @@ flowchart TD
 The default path (**pgvector + AGE**) lands every digest into the one local
 `skmem-pg` Postgres: vectors via pgvector, keyword matching via pg_search BM25
 (fused with vectors through Reciprocal Rank Fusion at curate time), and a knowledge
-graph via Apache AGE — no external cluster required. Qdrant/FalkorDB remain selectable
+graph via Apache AGE, no external cluster required. FalkorDB remains selectable
 for installs that still front a remote vector/graph cluster.
 
 > **Embedding model contract:** digests are embedded with `mxbai-embed-large`
@@ -310,7 +306,7 @@ flowchart TD
    naturally via skmemory's existing promotion, rather than guessing tier on ingest.
 4. **File-based briefing** — `whisper.md` is a plain Markdown file any process (the
    ritual, a hook, a human) can read. Dead-simple integration boundary.
-5. **Pluggable backends behind one interface** — pgvector/qdrant/chromadb and
+5. **Pluggable backends behind one interface:** pgvector and
    AGE/falkordb/none are swappable without touching the daemon, so the same code runs
    personal (one Postgres) or fleet (remote cluster).
 6. **Human-first curation** — cron/automation sessions are classified and
