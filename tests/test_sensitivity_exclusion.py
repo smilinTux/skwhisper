@@ -1,5 +1,7 @@
 """whisper.md never selects sensitive memories (sacred, grief, medical, family-private ...)."""
 import asyncio
+import importlib
+import os
 import sqlite3
 
 import pytest
@@ -12,7 +14,23 @@ VARIANTS = [
     "sacred", "SACRED", "Grief", "medical", "family-private", "family_private", "Family Private",
     "familyprivate", "personal_history", "PersonalHistory", "sаcred", "ｓａｃｒｅｄ",
     "griεf", "private", "therapy",
+    "sa\u200bcred", "sa\u200dcred", "sa\u00adcred", "sacre\u0301d", "sacr\u00e9d", "gr\u00efef",
+    "gr\u0131ef", "family\u2010private", "family\u2212private",
 ]
+
+INVISIBLE = [
+    "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad", "\u034f", "\u0301", "\u0308",
+    "\u0300", "\u0327", "\u20dd", "\ufe0f", "\ufe00", "\U000e0100", "\u200e", "\u200f",
+    "\u202a", "\u2062", "\u061c", "\u115f", "\u3164", "\u2010", "\u2011", "\u2012",
+    "\u2013", "\u2014", "\u2212", "\ufe63", "\uff0d",
+]
+
+
+def test_property_single_invisible_char_at_any_position_still_matches():
+    for stem in (*sv.SENSITIVE_STEMS, *sv.OWNER_ONLY_STEMS):
+        for ch in INVISIBLE:
+            for i in range(len(stem) + 1):
+                assert sv.is_sensitive([stem[:i] + ch + stem[i:]]), (stem, hex(ord(ch)), i)
 
 
 @pytest.mark.parametrize("tag", VARIANTS)
@@ -90,9 +108,12 @@ def test_pg_search_drops_sensitive_and_unreadable_rows(monkeypatch):
 
 
 def test_stems_and_normalization_match_skmemory():
-    skm = pytest.importorskip("skmemory.hooks.sensitivity", reason="packaged skmemory predates the helper")
+    if os.environ.get("SKWHISPER_REQUIRE_PARITY") == "1":
+        skm = importlib.import_module("skmemory.hooks.sensitivity")  # CI: must exist, never skip
+    else:
+        skm = pytest.importorskip("skmemory.hooks.sensitivity", reason="packaged skmemory predates the helper")
     assert sv.SENSITIVE_STEMS == skm.SENSITIVE_STEMS
     assert sv.OWNER_ONLY_STEMS == skm.OWNER_ONLY_STEMS
-    for t in VARIANTS + ["ops", "Sacred Ground", "legal-docs"]:
+    for t in VARIANTS + INVISIBLE + ["ops", "Sacred Ground", "legal-docs"]:
         assert sv.normalize(t) == skm.normalize(t)
         assert sv.is_sensitive([t]) == skm.is_sensitive([t])
