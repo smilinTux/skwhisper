@@ -1,8 +1,8 @@
 """Sensitive name matching for digest-derived whisper.md sections.
 
 A name is sensitive when it was recorded from a sensitive digest, or is a known
-patterns.json person whose normalized form equals a tag on a sensitive memory
-(digests tag people as ``first-last``). Each name token of 3+
+patterns.json person whose name tokens are a subset or superset of a sensitive
+memory's tag parts (digests tag people as ``first-last``). Each name token of 3+
 chars is matched on whole-word boundaries after stripping possessives and plurals,
 so "Quillan's birthday" matches Quillan Marrowby while "annual planning" does not
 match "Ann".
@@ -46,16 +46,29 @@ def name_keys(names) -> set[str]:
 
 
 def sensitive_name_keys(sens_tags, recorded_people, people) -> set[str]:
-    """Name keys from PERSON-LIKE sources only.
+    """Name keys from KNOWN people only (never from arbitrary tags).
 
-    Sources: people recorded from sensitive digests, and known people (patterns.json
-    entries) that carry a stem themselves or equal a tag of a sensitive memory.
-    Arbitrary tags are never split into names: ``morning-routine`` or ``2026-11-07``
-    on a sacred memory must not hide "morning standup" or "2026 goals".
+    A known person (a patterns.json entry or a person recorded from a sensitive
+    digest) is sensitive when it carries a stem, was recorded from a sensitive
+    digest, or its name tokens are a subset or superset of the hyphen-split parts of
+    a tag on a sensitive memory (so tag ``quillan-marrowby`` covers "Quillan",
+    "Quillan Marrowby's" and tag ``quillan`` covers "Quillan Marrowby"). Because a
+    known person must exist, tags such as ``2026-11-07`` or ``morning-routine`` hide
+    nothing. A sacred person with no known entry at all is out of scope. The
+    sensitive person's own name tokens (3+ chars) are then the match keys.
     """
-    tag_forms = {normalize(t) for t in sens_tags}
+    tag_parts = []
+    for t in sens_tags:
+        if is_sensitive([t]):
+            continue
+        parts = tokens(t)
+        if parts:
+            tag_parts.append(parts)
     names = list(recorded_people)
-    names += [p for p in people if is_sensitive([p]) or normalize(p) in tag_forms]
+    for p in people:
+        pt = tokens(p)
+        if is_sensitive([p]) or any(pt and (pt <= tp or tp <= pt) for tp in tag_parts):
+            names.append(p)
     return name_keys(names)
 
 

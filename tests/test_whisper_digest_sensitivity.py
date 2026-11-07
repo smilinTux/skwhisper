@@ -277,3 +277,43 @@ def test_unreadable_index_fails_closed(tmp_path, monkeypatch, caplog, breakage):
     assert any(
         "unreadable" in r.message or "unknown" in r.message for r in caplog.records
     )
+
+
+@pytest.mark.parametrize(
+    "tag,entry",
+    [
+        ("quillan-marrowby", "Quillan"),
+        ("quillan-marrowby", "Quillan Marrowby's"),
+        ("quillan", "Quillan Marrowby"),
+    ],
+)
+def test_known_person_variants_match_the_sacred_tag(tmp_path, monkeypatch, tag, entry):
+    cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [(f"sacred,{tag}", "")])
+    for sid in ("s1", "s2"):
+        update_patterns(
+            cfg.state_dir,
+            sid,
+            {
+                "topics": [
+                    "visiting quillan",
+                    "morning standup",
+                    "2026 goals",
+                    "deploy fixes",
+                    "claude upgrades",
+                ],
+                "questions": ["Is quillan marrowby ok?"],
+                "people": [entry, "Dana Ortel"],
+            },
+            digest_tags=["x"],
+        )
+    out = _curate(cfg, monkeypatch)
+    assert "quillan" not in out.lower() and "marrowby" not in out.lower()
+    for visible in (
+        "morning standup",
+        "2026 goals",
+        "deploy fixes",
+        "claude upgrades",
+        "Dana Ortel",
+    ):
+        assert visible in out
