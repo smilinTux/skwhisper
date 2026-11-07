@@ -157,6 +157,9 @@ async def digest_session(
             tags=tags,
             emotions=emotions,
             intensity=6.0,
+            # Lets skmemory's memory_expand return the raw episode: byte range
+            # of <session_id>.jsonl this digest covers (SKMEM-P3-07).
+            source_ref=f"session:{session_id}@{session.get('start_offset', 0)}-{session['new_offset']}",
         )
 
         # 9. Embed (bge-legal-v2, 1024-dim) and upsert to local pg memories table

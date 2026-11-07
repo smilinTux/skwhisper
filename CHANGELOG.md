@@ -7,6 +7,10 @@
   their config keys. pgvector is the only vector backend; requesting another
   raises (SKMEM-P5-07).
 
+### Added
+- Digest memories carry `source_ref=session:<id>@<start>-<end>` (byte range of the session JSONL),
+  so skmemory `memory_expand` can return the raw episode (SKMEM-P3-07).
+
 ### Fixed
 - Session digests resolve relative dates (yesterday, last week, tomorrow, weekday names)
   against the session's event time (newest message timestamp; with none the text is left unchanged),
