@@ -1,8 +1,8 @@
 """Sensitive name matching for digest-derived whisper.md sections.
 
-A name is sensitive when it appears as a tag on a sensitive-tagged memory (digests
-tag people as ``first-last``), was recorded from a sensitive digest, or is a
-patterns.json person whose normalized form equals such a tag. Each name token of 3+
+A name is sensitive when it was recorded from a sensitive digest, or is a known
+patterns.json person whose normalized form equals a tag on a sensitive memory
+(digests tag people as ``first-last``). Each name token of 3+
 chars is matched on whole-word boundaries after stripping possessives and plurals,
 so "Quillan's birthday" matches Quillan Marrowby while "annual planning" does not
 match "Ann".
@@ -17,7 +17,6 @@ from .sensitivity import _drop, is_sensitive, normalize
 
 _POSSESSIVE = re.compile(r"[’'`]s?\b", re.I)
 _TOKEN = re.compile(r"[^\W_]+")
-GENERIC_TAGS = frozenset({"skwhisper", "auto-digest", "human", "cron", "digest"})
 
 
 def _clean(text: object) -> str:
@@ -47,21 +46,16 @@ def name_keys(names) -> set[str]:
 
 
 def sensitive_name_keys(sens_tags, recorded_people, people) -> set[str]:
-    """Keys from sensitive memories' tags (stem-bearing and generic tags excluded)."""
-    multi, single = [], set()
-    for t in sens_tags:
-        if is_sensitive([t]) or normalize(t) in GENERIC_TAGS or not normalize(t):
-            continue
-        parts = [p for p in re.split(r"[\s_\-.]+", _clean(t)) if p]
-        if len(parts) > 1:
-            multi.append(t)
-        else:
-            single.add(t)
-    names = list(multi) + list(recorded_people)
-    # a single-word tag is a name only when it is also a known person
-    known = {normalize(p) for p in people}
-    names += [t for t in single if normalize(t) in known]
-    names += [p for p in people if is_sensitive([p])]
+    """Name keys from PERSON-LIKE sources only.
+
+    Sources: people recorded from sensitive digests, and known people (patterns.json
+    entries) that carry a stem themselves or equal a tag of a sensitive memory.
+    Arbitrary tags are never split into names: ``morning-routine`` or ``2026-11-07``
+    on a sacred memory must not hide "morning standup" or "2026 goals".
+    """
+    tag_forms = {normalize(t) for t in sens_tags}
+    names = list(recorded_people)
+    names += [p for p in people if is_sensitive([p]) or normalize(p) in tag_forms]
     return name_keys(names)
 
 

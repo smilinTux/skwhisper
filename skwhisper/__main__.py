@@ -10,8 +10,15 @@ import json
 from pathlib import Path
 
 from .config import get_config
+from .sensitive_names import mentions as mentions_
 from .daemon import run_daemon, run_digest_cycle, run_backlog_digest
-from .curator import curate_context
+from .curator import (
+    curate_context,
+    drop_sensitive_entries,
+    load_sensitivity,
+    _drop_sensitive_questions,
+    _drop_sensitive_topics,
+)
 from .patterns import load_patterns, get_hot_topics, get_repeated_questions
 from .watcher import load_state, extract_messages
 
@@ -60,12 +67,45 @@ def cmd_patterns(args):
 
     if args.json:
         patterns = load_patterns(config.state_dir)
+        sessions, keys, ok = load_sensitivity(config)
+        if ok:
+            patterns["topics"] = {
+                k: v
+                for k, v in patterns.get("topics", {}).items()
+                if not (set(v.get("sessions", [])) & sessions) and not mentions_(k, keys)
+            }
+            patterns["questions"] = {
+                k: v
+                for k, v in patterns.get("questions", {}).items()
+                if not mentions_(v.get("text", k), keys) and not mentions_(k, keys)
+            }
+            ents = patterns.setdefault("entities", {})
+            for kind in ("people", "projects"):
+                ents[kind] = drop_sensitive_entries(ents.get(kind, {}), keys)
+            patterns["behaviors"] = {
+                k: v for k, v in patterns.get("behaviors", {}).items() if not mentions_(k, keys)
+            }
+            patterns.pop("sensitive_people", None)
+        else:
+            patterns = {"error": "sensitivity sources unreadable: digest-derived data omitted"}
         print(json.dumps(patterns, indent=2))
         return
 
-    hot = get_hot_topics(config.state_dir, top_n=15)
+    hot = get_hot_topics(config.state_dir, top_n=1000)
     questions = get_repeated_questions(config.state_dir)
     patterns = load_patterns(config.state_dir)
+    sessions, keys, ok = load_sensitivity(config)
+    if ok:
+        # Render-time filter only: patterns.json is never rewritten.
+        hot = _drop_sensitive_topics(hot, sessions, keys)[:15]
+        questions = _drop_sensitive_questions(questions, keys)
+        ents = patterns.setdefault("entities", {})
+        for kind in ("people", "projects"):
+            ents[kind] = drop_sensitive_entries(ents.get(kind, {}), keys)
+    else:
+        hot, questions = [], []
+        patterns["entities"] = {"people": {}, "projects": {}}
+        print("Sensitivity sources unreadable: digest-derived sections omitted.\n")
 
     print("═══ SKWhisper Patterns ═══\n")
 
@@ -224,8 +264,16 @@ def cmd_status(args):
     print()
 
     # Topic distribution: top 5 human vs top 5 cron
-    human_topics = get_hot_topics(config.state_dir, top_n=5, session_type="human")
-    cron_topics = get_hot_topics(config.state_dir, top_n=5, session_type="cron")
+    s_sessions, s_keys, s_ok = load_sensitivity(config)
+
+    def _topics(kind):
+        if not s_ok:
+            return []
+        t = get_hot_topics(config.state_dir, top_n=1000, session_type=kind)
+        return _drop_sensitive_topics(t, s_sessions, s_keys)[:5]
+
+    human_topics = _topics("human")
+    cron_topics = _topics("cron")
 
     if human_topics or cron_topics:
         print("Top Topics by Session Type:")

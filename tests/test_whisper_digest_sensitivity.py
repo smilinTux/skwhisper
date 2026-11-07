@@ -162,7 +162,7 @@ def test_possessive_first_name_and_unlisted_variants_are_dropped(tmp_path, monke
                     "annual planning",
                 ],
                 "questions": ["When is Quillans party?", "Is the annual review done?"],
-                "people": ["Dana Ortel"],
+                "people": ["Dana Ortel", "Quillan Marrowby"],
             },
             digest_tags=["skwhisper", "auto-digest"],
         )
@@ -177,21 +177,25 @@ def test_short_name_does_not_drop_longer_words(tmp_path, monkeypatch):
     update_patterns(
         cfg.state_dir,
         "s1",
-        {"topics": ["annual planning", "ann visit"]},
+        {"topics": ["annual planning", "ann visit"], "people": ["Ann Vell"]},
         digest_tags=["x"],
     )
     update_patterns(
         cfg.state_dir,
         "s2",
-        {"topics": ["annual planning", "ann visit"]},
+        {"topics": ["annual planning", "ann visit"], "people": ["Ann Vell"]},
         digest_tags=["x"],
     )
     out = _curate(cfg, monkeypatch)
     assert "annual planning" in out and "ann visit" not in out
 
 
-def test_stored_patterns_are_purged(tmp_path, monkeypatch):
-    from skwhisper.patterns import load_patterns
+def test_patterns_json_is_never_rewritten_but_cli_view_filters(
+    tmp_path, monkeypatch, capsys
+):
+    from types import SimpleNamespace as NS
+
+    import skwhisper.__main__ as cli
 
     cfg = _run(tmp_path, monkeypatch)
     _index(cfg.memory_dir / "index.db", [("sacred,quillan-marrowby", "")])
@@ -201,14 +205,44 @@ def test_stored_patterns_are_purged(tmp_path, monkeypatch):
         {
             "topics": ["quillan"],
             "questions": ["Where is Quillan?"],
-            "people": ["Quillan Marrowby"],
-            "projects": ["Quillan memorial"],
+            "people": ["Quillan Marrowby", "Dana Ortel"],
+            "projects": ["Quillan memorial", "Deploy tool"],
         },
         digest_tags=["x"],
     )
+    before = (cfg.state_dir / "patterns.json").read_text()
     _curate(cfg, monkeypatch)
-    raw = str(load_patterns(cfg.state_dir)).lower()
-    assert "quillan" not in raw
+    assert (cfg.state_dir / "patterns.json").read_text() == before
+    monkeypatch.setattr(cli, "get_config", lambda p: cfg)
+    for as_json in (False, True):
+        cli.cmd_patterns(NS(config=None, json=as_json))
+    out = capsys.readouterr().out.lower()
+    assert "quillan" not in out and "dana ortel" in out and "deploy tool" in out
+    assert (cfg.state_dir / "patterns.json").read_text() == before
+
+
+@pytest.mark.parametrize(
+    "tag,topic",
+    [
+        ("2026-11-07", "2026 goals"),
+        ("morning-routine", "morning standup"),
+        ("deploy-pipeline", "deploy fixes"),
+        ("claude-code", "claude upgrades"),
+    ],
+)
+def test_ordinary_hyphenated_tags_on_a_sensitive_memory_hide_nothing(
+    tmp_path, monkeypatch, tag, topic
+):
+    cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [(f"sacred,{tag},quillan-marrowby", "")])
+    for sid in ("s1", "s2"):
+        update_patterns(
+            cfg.state_dir,
+            sid,
+            {"topics": [topic], "people": ["Dana Ortel"]},
+            digest_tags=["x"],
+        )
+    assert topic in _curate(cfg, monkeypatch)
 
 
 @pytest.mark.parametrize("breakage", ["missing", "corrupt", "no_table"])

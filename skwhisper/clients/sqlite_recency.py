@@ -44,7 +44,7 @@ class SQLiteRecencyClient:
         """
         if not self.index_db.exists():
             log.info(
-                "SQLite index not found at %s — skipping recency feed", self.index_db
+                "SQLite index not found at %s, skipping recency feed", self.index_db
             )
             return []
         placeholders = ",".join("?" for _ in tiers)
@@ -73,7 +73,7 @@ class SQLiteRecencyClient:
                 conn.close()
         except sqlite3.Error as e:
             log.warning(
-                "SQLite recency read failed (%s) — continuing without recency feed", e
+                "SQLite recency read failed (%s), continuing without recency feed", e
             )
             return []
 

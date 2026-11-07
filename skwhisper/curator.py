@@ -1,6 +1,5 @@
 """Context Curator — surfaces relevant memories before sessions."""
 
-import json
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
@@ -13,7 +12,6 @@ from .patterns import (
     get_repeated_questions,
     get_sensitive_people,
 )
-from .patterns import save_patterns
 from .sensitive_names import mentions, sensitive_name_keys
 from .watcher import extract_messages
 from .config import Config
@@ -50,19 +48,18 @@ async def curate_context(config: Config) -> str:
         # 4. Pattern data (from local state files — no pg dependency)
         hot_topics = get_hot_topics(config.state_dir, top_n=1000, session_type="human")
         repeated_qs = get_repeated_questions(config.state_dir, min_count=2)
-        sens_sessions, sens_tags, sens_ok = SQLiteRecencyClient(
-            config.memory_dir / "index.db"
-        ).sensitive_digest_refs()
-        sens_names: set[str] = set()
+        sens_sessions, sens_names, sens_ok = load_sensitivity(config)
         if sens_ok:
-            sens_names = _sensitive_names(config, sens_tags)
-            _purge_patterns(config, sens_sessions, sens_names)
-            hot_topics = _drop_sensitive_topics(hot_topics, sens_sessions, sens_names)[:10]
+            hot_topics = _drop_sensitive_topics(hot_topics, sens_sessions, sens_names)[
+                :10
+            ]
             repeated_qs = _drop_sensitive_questions(repeated_qs, sens_names)
         else:
             # Fail CLOSED: with the sensitivity sources unreadable, nothing
             # digest-derived may reach whisper.md.
-            log.warning("Sensitivity sources unreadable: omitting digest-derived sections")
+            log.warning(
+                "Sensitivity sources unreadable: omitting digest-derived sections"
+            )
             hot_topics, repeated_qs = [], []
 
         # 2–3. Semantic feed (skmem-pg). Best-effort: if pg/embed is unreachable we
@@ -74,20 +71,34 @@ async def curate_context(config: Config) -> str:
                 embed_text = recent_text[:1500]
                 log.info("Embedding recent context (%d chars)...", len(embed_text))
                 vector = await pgmem.embed(embed_text)
-                log.info("Searching local pg (hybrid vec+BM25) for relevant memories...")
+                log.info(
+                    "Searching local pg (hybrid vec+BM25) for relevant memories..."
+                )
                 results = await pgmem.search(embed_text, vector, top_k=config.top_k)
                 log.info("Found %d relevant memories", len(results))
                 health.record(config.state_dir, "vector_read", True)
             except Exception as e:
-                health.record(config.state_dir, "vector_read", False, f"semantic feed failed: {e}")
-                log.warning("Semantic feed (skmem-pg) unavailable (%s) — "
-                            "whisper from recency + patterns only", e)
+                health.record(
+                    config.state_dir, "vector_read", False, f"semantic feed failed: {e}"
+                )
+                log.warning(
+                    "Semantic feed (skmem-pg) unavailable (%s), "
+                    "whisper from recency + patterns only",
+                    e,
+                )
         else:
             log.info("No recent conversation context — semantic feed skipped")
 
         # 5. Build whisper (recency + semantic + patterns)
         whisper = _build_whisper(
-            config, results, hot_topics, repeated_qs, [], recent_memories, sens_names, sens_ok
+            config,
+            results,
+            hot_topics,
+            repeated_qs,
+            [],
+            recent_memories,
+            sens_names,
+            sens_ok,
         )
         warn = health.banner(config.state_dir)
         if warn:
@@ -109,43 +120,34 @@ def _sensitive_names(config: Config, sens_tags: set[str]) -> set[str]:
     """Whole-word name keys that must never reach whisper.md (see sensitive_names)."""
     pat = load_patterns(config.state_dir)
     people = pat.get("entities", {}).get("people", {})
-    return sensitive_name_keys(sens_tags, get_sensitive_people(config.state_dir), people)
+    return sensitive_name_keys(
+        sens_tags, get_sensitive_people(config.state_dir), people
+    )
 
 
-def _purge_patterns(config: Config, sessions: set[str], keys: set[str]) -> None:
-    """Remove already-stored sensitive entries from patterns.json (best effort)."""
-    pat = load_patterns(config.state_dir)
-    before = json.dumps(pat, sort_keys=True)
-    pat["topics"] = {
-        k: v
-        for k, v in pat.get("topics", {}).items()
-        if not (set(v.get("sessions", [])) & sessions) and not mentions(k, keys)
-    }
-    pat["questions"] = {
-        k: v
-        for k, v in pat.get("questions", {}).items()
-        if not mentions(v.get("text", k), keys) and not mentions(k, keys)
-    }
-    ents = pat.setdefault("entities", {})
-    for kind in ("people", "projects"):
-        ents[kind] = {n: c for n, c in ents.get(kind, {}).items() if not mentions(n, keys)}
-    pat["behaviors"] = {
-        k: v
-        for k, v in pat.get("behaviors", {}).items()
-        if not mentions(k, keys) and not mentions(v.get("note", "") if isinstance(v, dict) else "", keys)
-    }
-    if json.dumps(pat, sort_keys=True) != before:
-        try:
-            save_patterns(config.state_dir, pat)
-        except OSError as e:
-            log.warning("Could not purge sensitive patterns (%s)", e)
+def load_sensitivity(config: Config) -> tuple[set[str], set[str], bool]:
+    """(sensitive session ids, sensitive name keys, ok). ok False means fail closed."""
+    sessions, tags, ok = SQLiteRecencyClient(
+        config.memory_dir / "index.db"
+    ).sensitive_digest_refs()
+    if not ok:
+        return set(), set(), False
+    return sessions, _sensitive_names(config, tags), True
 
 
-def _drop_sensitive_topics(topics: list[dict], sessions: set[str], name_keys: set[str]) -> list[dict]:
+def drop_sensitive_entries(entries: dict, keys: set[str]) -> dict:
+    """Render-time filter for name-keyed pattern dicts (people, projects). Never rewrites patterns.json."""
+    return {n: c for n, c in entries.items() if not mentions(n, keys)}
+
+
+def _drop_sensitive_topics(
+    topics: list[dict], sessions: set[str], name_keys: set[str]
+) -> list[dict]:
     return [
         t
         for t in topics
-        if not (set(t.get("sessions", [])) & sessions) and not mentions(t["topic"], name_keys)
+        if not (set(t.get("sessions", [])) & sessions)
+        and not mentions(t["topic"], name_keys)
     ]
 
 
@@ -156,6 +158,7 @@ def _drop_sensitive_questions(questions: list[dict], name_keys: set[str]) -> lis
 def _is_cron_session(path: Path) -> bool:
     """Detect if a session was triggered by cron (automated, not human-driven)."""
     import json
+
     try:
         with open(path) as f:
             for i, line in enumerate(f):
@@ -168,13 +171,16 @@ def _is_cron_session(path: Path) -> bool:
                     if isinstance(text, str) and "[cron:" in text:
                         return True
                     # Also check for common cron task patterns
-                    if isinstance(text, str) and any(kw in text.lower() for kw in [
-                        "moltbook reply sprint",
-                        "self-reflection: review",
-                        "morning-motivation",
-                        "comms-check",
-                        "gmail-check",
-                    ]):
+                    if isinstance(text, str) and any(
+                        kw in text.lower()
+                        for kw in [
+                            "moltbook reply sprint",
+                            "self-reflection: review",
+                            "morning-motivation",
+                            "comms-check",
+                            "gmail-check",
+                        ]
+                    ):
                         return True
                 except (json.JSONDecodeError, KeyError):
                     continue
@@ -209,10 +215,12 @@ def _get_recent_context(config: Config) -> str:
     elif len(human_sessions) >= 3:
         selected = human_sessions[:3]
 
-    log.info("Context selection: %d human, %d cron (from %d checked)",
-             len([s for s in selected if s in human_sessions]),
-             len([s for s in selected if s in cron_sessions]),
-             min(len(active), 20))
+    log.info(
+        "Context selection: %d human, %d cron (from %d checked)",
+        len([s for s in selected if s in human_sessions]),
+        len([s for s in selected if s in cron_sessions]),
+        min(len(active), 20),
+    )
 
     all_text = []
     for path in selected:
@@ -278,7 +286,11 @@ def _build_whisper(
 
     unavailable = "_source unavailable: sensitivity index unreadable._"
     if not sensitive_ok:
-        for header in ("Hot Topics (recurring)", "Repeated Questions", "Frequently Mentioned People"):
+        for header in (
+            "Hot Topics (recurring)",
+            "Repeated Questions",
+            "Frequently Mentioned People",
+        ):
             lines += [f"## {header}", "", unavailable, ""]
         hot_topics, repeated_questions = [], []
 
@@ -287,7 +299,9 @@ def _build_whisper(
         lines.append("## Hot Topics (recurring)")
         lines.append("")
         for t in hot_topics[:10]:
-            lines.append(f"- **{t['topic']}** — mentioned {t['count']}x (last: {t.get('last', '?')})")
+            lines.append(
+                f"- **{t['topic']}**: mentioned {t['count']}x (last: {t.get('last', '?')})"
+            )
         lines.append("")
 
     # Repeated questions
@@ -295,7 +309,9 @@ def _build_whisper(
         lines.append("## Repeated Questions")
         lines.append("")
         for q in repeated_questions[:5]:
-            lines.append(f"- \"{q['question']}\" — asked {q['count']}x (last: {q.get('last_asked', '?')})")
+            lines.append(
+                f'- "{q["question"]}": asked {q["count"]}x (last: {q.get("last_asked", "?")})'
+            )
         lines.append("")
 
     # Patterns summary
