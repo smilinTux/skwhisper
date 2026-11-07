@@ -23,6 +23,7 @@ import httpx
 import psycopg
 
 from ..pgdsn import resolve_dsn
+from ..sensitivity import is_sensitive
 
 log = logging.getLogger("skwhisper.pgmem")
 
@@ -94,19 +95,31 @@ class PGMemClient:
         bm_q = self._bm25_query(q_text)
         with psycopg.connect(self.dsn, connect_timeout=10) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (bm_q, self._vec_literal(q_vec), k, self.agent))
-                for _id, layer, title, content, score in cur.fetchall():
-                    out.append({
-                        "id": _id,
-                        "payload": {
-                            "title": title or "untitled",
-                            "content": content or "",
-                            "tags": [],
-                            "tier": layer,
-                        },
-                        "score": float(score) if score is not None else 0.0,
-                    })
-        return out
+                # Over-fetch: sensitive rows (sacred, grief, medical, ...) are dropped
+                # below and must not shrink the result set.
+                cur.execute(sql, (bm_q, self._vec_literal(q_vec), k * 3, self.agent))
+                rows = cur.fetchall()
+                ids = [r[0] for r in rows]
+                tags_by_id: dict = {}
+                if ids:
+                    cur.execute("SELECT id, tags FROM memories WHERE id = ANY(%s)", (ids,))
+                    tags_by_id = {i: list(t or []) for i, t in cur.fetchall()}
+        for _id, layer, title, content, score in rows:
+            tags = tags_by_id.get(_id)
+            # Fail closed: a row whose tags cannot be read is not shown.
+            if tags is None or is_sensitive(tags):
+                continue
+            out.append({
+                "id": _id,
+                "payload": {
+                    "title": title or "untitled",
+                    "content": content or "",
+                    "tags": tags,
+                    "tier": layer,
+                },
+                "score": float(score) if score is not None else 0.0,
+            })
+        return out[:k]
 
     async def search(self, q_text: str, q_vec: list[float],
                      top_k: int = 10, score_threshold: float = 0.0) -> list[dict]:
