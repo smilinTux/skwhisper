@@ -9,7 +9,7 @@
 
 ### Fixed
 - Session digests resolve relative dates (yesterday, last week, tomorrow, weekday names)
-  against the session's event time (newest message timestamp, else file mtime),
+  against the session's event time (newest message timestamp; with none the text is left unchanged),
   never the digest-time wall clock. The summarizer is told the conversation date
   and a deterministic pass appends the ISO date in parentheses after each phrase,
   keeping the original words (SKMEM-P3-05).
