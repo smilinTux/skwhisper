@@ -1,9 +1,7 @@
 """Backend factories — select vector + graph clients from config.
 
-Vector backends (config.vector_backend, default "pgvector"):
+Vector backends (config.vector_backend, only "pgvector"; Chroma and Qdrant are retired):
   - pgvector : local Postgres + pgvector + BM25 hybrid (clients/pgmem.py)   [DEFAULT]
-  - qdrant   : remote Qdrant / skvector (clients/qdrant.py)
-  - chromadb : local ChromaDB (clients/chroma.py)
 
 Graph backends (config.graph_backend, default "age"):
   - age      : Apache AGE graph inside the local Postgres (clients/agegraph.py) [DEFAULT]
@@ -28,17 +26,17 @@ def make_vector_client(config):
         log.info("vector backend: pgvector (local Postgres)")
         return PGMemClient(agent=agent)
 
-    if backend == "qdrant":
-        from .qdrant import QdrantClient
-        log.info("vector backend: qdrant (%s)", config.qdrant_url or "<unset>")
-        return QdrantClient(config.qdrant_url, config.qdrant_api_key, config.qdrant_collection)
+    if backend in ("qdrant", "chroma", "chromadb"):
+        raise ValueError(f"vector_backend {backend!r} is retired; only pgvector is supported")
 
-    if backend in ("chroma", "chromadb"):
-        from .chroma import ChromaClient
-        log.info("vector backend: chromadb (local)")
-        return ChromaClient(config.memory_dir, agent=agent)
+    raise ValueError(f"unknown vector_backend: {backend!r} (use pgvector)")
 
-    raise ValueError(f"unknown vector_backend: {backend!r} (use pgvector|qdrant|chromadb)")
+
+def _mark(config, comp, ok, err=""):
+    sd = getattr(config, "state_dir", None)
+    if sd is not None:
+        from .. import health
+        health.record(sd, comp, ok, err)
 
 
 def make_graph_writer(config):
@@ -50,7 +48,10 @@ def make_graph_writer(config):
 
     if backend == "age":
         from .agegraph import AGEGraphWriter
-        return AGEGraphWriter.from_config(config)
+        writer = AGEGraphWriter.from_config(config)
+        if writer is None:
+            _mark(config, "graph", False, "AGE graph unavailable, graph writes are skipped")
+        return writer
 
     if backend == "falkordb":
         from .skgraph import SKGraphWriter

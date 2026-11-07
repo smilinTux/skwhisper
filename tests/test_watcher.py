@@ -134,7 +134,6 @@ def test_config(monkeypatch):
 
     config = cfg_mod.Config()  # No TOML, use defaults
     assert config.ollama_url == "http://192.168.0.100:11434"
-    assert config.qdrant_collection == "lumina-memory"
     assert config.min_messages == 2
     assert config.max_digest_per_cycle == 20
     # Sovereign default: sessions live under skcapstone agent home

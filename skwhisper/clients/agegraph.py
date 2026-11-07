@@ -15,13 +15,14 @@ from typing import TYPE_CHECKING
 
 import psycopg
 
+from ..pgdsn import resolve_dsn, redact
+
 if TYPE_CHECKING:
     from ..config import Config
 
 log = logging.getLogger("skwhisper.agegraph")
 
 _AGENT = os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "lumina"
-DEFAULT_DSN = os.environ.get("SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory")
 DEFAULT_GRAPH = f"{_AGENT}_knowledge"
 
 KNOWN_PROJECTS = [
@@ -41,8 +42,11 @@ def _escape(s) -> str:
 class AGEGraphWriter:
     """Synchronous Apache-AGE graph writer (same model as SKGraphWriter)."""
 
-    def __init__(self, dsn: str = DEFAULT_DSN, graph: str = DEFAULT_GRAPH):
+    def __init__(self, dsn: str | None = None, graph: str = DEFAULT_GRAPH):
         self._graph = graph
+        self.query_errors = 0
+        self.last_error = ""
+        dsn = dsn or resolve_dsn()
         self._conn = psycopg.connect(dsn, connect_timeout=10, autocommit=True)
         with self._conn.cursor() as cur:
             try:
@@ -58,12 +62,11 @@ class AGEGraphWriter:
 
     @classmethod
     def from_config(cls, config: "Config") -> "AGEGraphWriter | None":
-        dsn = getattr(config, "pg_dsn", DEFAULT_DSN)
         graph = getattr(config, "falkordb_graph", DEFAULT_GRAPH)
         try:
-            return cls(dsn=dsn, graph=graph)
+            return cls(dsn=None, graph=graph)
         except Exception as e:
-            log.warning("AGE graph unavailable (%s): %s — skipping graph writes", graph, e)
+            log.warning("AGE graph unavailable (%s): %s, skipping graph writes", graph, redact(e))
             return None
 
     def _q(self, cypher: str):
@@ -74,7 +77,9 @@ class AGEGraphWriter:
                 )
                 return cur.fetchall()
         except Exception as e:
-            log.debug("agegraph query error: %s | cypher: %.120s", e, cypher)
+            self.query_errors += 1
+            self.last_error = redact(e)
+            log.warning("agegraph query error: %s | cypher: %.120s", self.last_error, cypher)
             return None
 
     def _merge_node(self, label: str, name: str):
@@ -93,6 +98,7 @@ class AGEGraphWriter:
         )
 
     def write_memory(self, session_id, title, summary, topics, people, projects, created_at):
+        self.query_errors = 0
         safe_title = _escape(title[:120])
         if not safe_title.strip():
             return
@@ -125,6 +131,9 @@ class AGEGraphWriter:
                 a, b = sorted((_escape(t1), _escape(t2)))
                 self._merge_rel("Tag", a, "RELATED_TO", "Tag", b)
 
+        if self.query_errors:
+            raise RuntimeError(
+                f"{self.query_errors} AGE queries failed: {self.last_error}")
         log.debug("agegraph: Memory '%s' (topics=%d people=%d projects=%d)",
                   title[:40], len(clean_topics), len(people or []), len(all_projects))
 
