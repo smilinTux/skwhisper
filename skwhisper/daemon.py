@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from .config import get_config, Config
-from .dates import resolve_relative_dates, session_event_at
+from .dates import event_date, resolve_relative_dates, session_event_at
 from .watcher import scan_sessions, format_messages_for_summary, mark_digested, classify_session, extract_messages, load_state
 from .curator import curate_context
 from .patterns import update_patterns
@@ -105,7 +105,7 @@ async def digest_session(
         # 3. Summarize via ollama
         event_at = session_event_at(session)
         if event_at is not None:
-            text = f"[Conversation date: {event_at.date().isoformat()}]\n\n{text}"
+            text = f"[Conversation date: {event_date(event_at).isoformat()}]\n\n{text}"
         summary = await ollama.summarize(text)
         if not summary or len(summary) < 20:
             log.warning("Summary too short for session %s, skipping", session_id[:12])

@@ -58,7 +58,7 @@ def test_session_event_at_prefers_message_timestamps():
         "last_seen": 1.0,
     }
     assert session_event_at(s) == EVENT
-    assert session_event_at({"messages": [], "last_seen": 0}).year == 1970
+    assert session_event_at({"messages": [], "last_seen": 0}) is None
     assert session_event_at({"messages": []}) is None
 
 
@@ -107,3 +107,57 @@ def test_digest_session_resolves_against_event_at(tmp_path, monkeypatch):
     assert "[Conversation date: 2026-03-13]" in seen["text"]
     assert "yesterday (2026-03-12)" in seen["content"]
     assert "tomorrow (2026-03-14)" in seen["content"]
+
+
+def test_event_date_keeps_own_offset():
+    from datetime import date
+
+    from skwhisper.dates import event_date, parse_event_at
+
+    west = parse_event_at("2026-03-13T23:30:00-08:00")  # 07:30 UTC next day
+    assert event_date(west) == date(2026, 3, 13)
+    assert "yesterday (2026-03-12)" in resolve_relative_dates("yesterday", west)
+    east = parse_event_at("2026-03-14T00:10:00+09:00")  # 15:10 UTC previous day
+    assert event_date(east) == date(2026, 3, 14)
+    assert "yesterday (2026-03-13)" in resolve_relative_dates("yesterday", east)
+
+
+def test_naive_timestamp_uses_its_own_date():
+    from skwhisper.dates import event_date, parse_event_at
+
+    assert event_date(parse_event_at("2026-03-13T23:30:00")).isoformat() == "2026-03-13"
+
+
+def test_header_uses_own_offset_date(tmp_path, monkeypatch):
+    from skwhisper.dates import event_date, session_event_at
+
+    s = {"messages": [{"timestamp": "2026-03-13T23:30:00-08:00"}]}
+    assert event_date(session_event_at(s)).isoformat() == "2026-03-13"
+
+
+def test_guards_leave_code_urls_quotes_alone():
+    for t in [
+        "run `echo yesterday` now",
+        "```\nsleep until tomorrow\n```",
+        "see https://x.io/yesterday/last-week",
+        'he said "see you tomorrow" then left',
+        "he said \u201csee you tomorrow\u201d then left",
+    ]:
+        assert resolve_relative_dates(t, EVENT) == t, t
+    assert "tomorrow (2026-03-14)" in resolve_relative_dates('"q" and tomorrow', EVENT)
+
+
+def test_possessive_left_alone():
+    t = "Reviewed last week's PR and yesterday\u2019s fix."
+    assert resolve_relative_dates(t, EVENT) == t
+
+
+def test_existing_parenthetical_date_not_doubled():
+    for t in ["fixed yesterday (March 12) ok", "fixed yesterday (2026-03-12) ok"]:
+        assert resolve_relative_dates(t, EVENT) == t
+
+
+def test_should_is_not_future():
+    assert "on Tuesday (2026-03-10)" in resolve_relative_dates(
+        "It should have run on Tuesday.", EVENT
+    )

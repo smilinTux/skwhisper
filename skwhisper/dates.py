@@ -11,7 +11,7 @@ reads the wall clock.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 _WEEKDAYS = [
     "monday",
@@ -27,48 +27,58 @@ _WD = "(?:" + "|".join(w.capitalize() for w in _WEEKDAYS) + ")"
 # Phrases that put a bare "on Friday" in the future rather than the past.
 _FUTURE_RE = re.compile(
     r"\b(will|won't|going to|plans? to|planned|scheduled|due|upcoming|next steps?|"
-    r"to be|should|need to|needs to|expects?|expected|by)\b|'ll\b",
+    r"to be|need to|needs to|expects?|expected|by)\b|'ll\b",
     re.IGNORECASE,
+)
+
+# Spans never rewritten: fenced code, inline code, URLs, double-quoted text.
+_PROTECTED_RE = re.compile(
+    r"```.*?```|`[^`\n]*`|https?://\S+|\"[^\"\n]*\"|\u201c[^\u201d\n]*\u201d",
+    re.DOTALL,
 )
 
 _PHRASE_RE = re.compile(
     r"\b(?P<phrase>"
     r"day before yesterday|day after tomorrow|yesterday|tomorrow|today|tonight|last night|"
     r"last week|next week|last month|next month|"
-    r"(?:last|next|this|on)\s+" + _WD + r")\b(?!\s*\(\s*(?:week of )?\d{4}-\d{2})",
+    r"(?:last|next|this|on)\s+"
+    + _WD
+    + r")\b(?!['\u2019]s\b)(?!\s*\([^)\n]*\d[^)\n]*\))",
     re.IGNORECASE,
 )
 
 
 def parse_event_at(value) -> datetime | None:
-    """Parse an ISO timestamp or epoch seconds into an aware UTC datetime."""
-    if value is None or value == "":
+    """Parse an ISO timestamp into an aware datetime, keeping its own UTC offset.
+
+    The calendar date of a conversation is the date where it happened, so the
+    offset is never converted away (23:30-08:00 is still that evening). A naive
+    timestamp is read in the host's local zone.
+    """
+    if not value or not isinstance(value, str):
         return None
     try:
-        if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
-        s = str(value).strip().replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s)
-    except (ValueError, OverflowError, OSError):
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
         return None
-    return (
-        dt.replace(tzinfo=timezone.utc)
-        if dt.tzinfo is None
-        else dt.astimezone(timezone.utc)
-    )
+    return dt.astimezone() if dt.tzinfo is None else dt
+
+
+def event_date(event_at: datetime) -> date:
+    """Calendar date in the timestamp's own offset."""
+    return event_at.date()
 
 
 def session_event_at(session: dict) -> datetime | None:
-    """When the conversation happened: its newest message timestamp, else file mtime.
+    """When the conversation happened: its newest message timestamp.
 
-    Returns None when neither is known, in which case nothing is resolved
-    (guessing from the wall clock is exactly the bug this module prevents).
+    No message timestamp means no event time (None) and nothing is resolved.
+    File mtime is deliberately not a fallback: sync tools rewrite it, so it
+    records when a file arrived, not when the conversation happened.
     """
     stamps = [parse_event_at(m.get("timestamp")) for m in session.get("messages") or []]
     stamps = [s for s in stamps if s is not None]
-    if stamps:
-        return max(stamps)
-    return parse_event_at(session.get("last_seen"))
+    return max(stamps) if stamps else None
 
 
 def _weekday_date(base, wd: int, mode: str, sentence: str):
@@ -117,9 +127,12 @@ def resolve_relative_dates(text: str, event_at: datetime | None) -> str:
     """Append "(ISO date)" after each relative date phrase, anchored at event_at."""
     if not text or event_at is None:
         return text
-    base = event_at.date()
+    base = event_date(event_at)
+    spans = [m.span() for m in _PROTECTED_RE.finditer(text)]
     out, last = [], 0
     for m in _PHRASE_RE.finditer(text):
+        if any(a <= m.start() < b for a, b in spans):
+            continue
         start = text.rfind(".", 0, m.start()) + 1
         end = text.find(".", m.end())
         sentence = text[start : end if end != -1 else len(text)]
