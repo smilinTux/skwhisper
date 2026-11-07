@@ -12,6 +12,8 @@
   so skmemory `memory_expand` can return the raw episode (SKMEM-P3-07).
 
 ### Fixed
+- Relative-date resolver no longer raises on a weekday phrase with extra whitespace or a newline
+  ("last  Friday", "next\nMonday"); the phrase is whitespace-normalised before lookup.
 - Session digests resolve relative dates (yesterday, last week, tomorrow, weekday names)
   against the session's event time (newest message timestamp; with none the text is left unchanged),
   never the digest-time wall clock. The summarizer is told the conversation date

@@ -200,3 +200,8 @@ def test_digest_source_ref_names_session_and_byte_range(tmp_path, monkeypatch):
     }
     asyncio.run(daemon.digest_session(Cfg(), session, Ollama(), None, Mem()))
     assert seen["source_ref"] == "session:20260101_abc@400-900"
+
+
+def test_weekday_phrase_with_extra_whitespace():
+    assert "last  Monday (2026-03-09)" in resolve_relative_dates("Met last  Monday.", EVENT)
+    assert "next\nMonday (2026-03-16)" in resolve_relative_dates("See you next\nMonday.", EVENT)
