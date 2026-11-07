@@ -8,6 +8,11 @@
   raises (SKMEM-P5-07).
 
 ### Fixed
+- Session digests resolve relative dates (yesterday, last week, tomorrow, weekday names)
+  against the session's event time (newest message timestamp, else file mtime),
+  never the digest-time wall clock. The summarizer is told the conversation date
+  and a deterministic pass appends the ISO date in parentheses after each phrase,
+  keeping the original words (SKMEM-P3-05).
 - The pg DSN resolves from `SKMEMORY_PG_DSN` / `~/.config/environment.d/skmemory.conf`
   only. No per-agent `pg_dsn` override and no hardcoded fallback password
   (SKMEM-P0-13).

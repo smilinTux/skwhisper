@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from .config import get_config, Config
+from .dates import resolve_relative_dates, session_event_at
 from .watcher import scan_sessions, format_messages_for_summary, mark_digested, classify_session, extract_messages, load_state
 from .curator import curate_context
 from .patterns import update_patterns
@@ -102,6 +103,9 @@ async def digest_session(
         text = format_messages_for_summary(messages, user_label=config.user_label, agent_label=config.agent_label)
 
         # 3. Summarize via ollama
+        event_at = session_event_at(session)
+        if event_at is not None:
+            text = f"[Conversation date: {event_at.date().isoformat()}]\n\n{text}"
         summary = await ollama.summarize(text)
         if not summary or len(summary) < 20:
             log.warning("Summary too short for session %s, skipping", session_id[:12])
@@ -111,6 +115,9 @@ async def digest_session(
             log.warning("Summarizer refused or found nothing for session %s, not storing", session_id[:12])
             mark_digested(config, session_id, session["new_offset"], session_type="refusal-skipped")
             return True
+
+        # 3b. Ground relative dates against when the conversation happened.
+        summary = resolve_relative_dates(summary, event_at)
 
         # 4. Extract structured topics
         extracted = await ollama.extract_topics(summary)
