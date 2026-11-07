@@ -99,6 +99,8 @@ class OllamaClient:
             "- Emotional moments or notable interactions\n"
             "- People and projects mentioned\n\n"
             "Be factual and specific. Include names, dates, and concrete details. "
+            "If the transcript starts with a [Conversation date: ...] line, resolve relative dates "
+            "(yesterday, last week, Friday) against that date, never today's. "
             "Do NOT add commentary — just the digest."
         )
         # Fence the transcript: without it, short chats ("can you tell me X?")
