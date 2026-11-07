@@ -15,6 +15,8 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from ..sensitivity import csv_is_sensitive
+
 log = logging.getLogger("skwhisper.sqlite_recency")
 
 # Recency tiers (from the active_memories view). "historical" (>7d, <=30d) is excluded
@@ -31,6 +33,8 @@ class SQLiteRecencyClient:
     def recent(self, limit: int = 8, tiers: tuple[str, ...] = DEFAULT_TIERS) -> list[dict]:
         """Return up to ``limit`` newest memories (created_at DESC) within ``tiers``.
 
+        Rows with a sensitive tag (see ``skwhisper.sensitivity``) are never returned.
+
         Each dict: id, title, summary, content_preview, tags, layer, created_at, context_tier.
         Returns ``[]`` (never raises) if the index is missing or unreadable — recency is a
         best-effort enrichment, not a hard dependency.
@@ -44,17 +48,24 @@ class SQLiteRecencyClient:
             conn = sqlite3.connect(f"file:{self.index_db}?mode=ro", uri=True, timeout=5)
             conn.row_factory = sqlite3.Row
             try:
-                rows = conn.execute(
-                    f"SELECT id, title, summary, content_preview, tags, layer, "
-                    f"       created_at, context_tier "
-                    f"FROM active_memories "
-                    f"WHERE context_tier IN ({placeholders}) "
-                    f"ORDER BY created_at DESC LIMIT ?",
-                    (*tiers, limit),
-                ).fetchall()
+                # Sensitive rows (sacred, grief, medical, ...) never reach whisper.md:
+                # over-fetch, drop them, take the next newest.
+                fetch = max(limit * 4, 32)
+                while True:
+                    rows = conn.execute(
+                        f"SELECT id, title, summary, content_preview, tags, layer, "
+                        f"       created_at, context_tier "
+                        f"FROM active_memories "
+                        f"WHERE context_tier IN ({placeholders}) "
+                        f"ORDER BY created_at DESC LIMIT ?",
+                        (*tiers, fetch),
+                    ).fetchall()
+                    kept = [dict(r) for r in rows if not csv_is_sensitive(r["tags"])]
+                    if len(kept) >= limit or len(rows) < fetch or fetch >= 5000:
+                        return kept[:limit]
+                    fetch *= 4
             finally:
                 conn.close()
-            return [dict(r) for r in rows]
         except sqlite3.Error as e:
             log.warning("SQLite recency read failed (%s) — continuing without recency feed", e)
             return []

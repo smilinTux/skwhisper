@@ -7,7 +7,11 @@
   their config keys. pgvector is the only vector backend; requesting another
   raises (SKMEM-P5-07).
 
+### Fixed
+- whisper.md no longer selects sensitive memories. The SQLite recency feed and the pg hybrid search drop rows tagged sacred, grief, medical, family-private, private and the other skmemory sensitive stems (normalized: NFKD with marks and format controls dropped, look-alike letters folded, every dash, space, `_` and `.` stripped), and take the next candidate instead. `skwhisper/sensitivity.py` ports skmemory's helper; a parity test pins them.
+
 ### Added
+- `.github/workflows/test.yml`: runs pytest on every PR with skmemory installed from git main; the skmemory parity test is required there, not skipped.
 - Digest memories carry `source_ref=session:<id>@<start>-<end>` (byte range of the session JSONL),
   so skmemory `memory_expand` can return the raw episode (SKMEM-P3-07).
 
