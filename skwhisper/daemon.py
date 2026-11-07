@@ -189,7 +189,9 @@ async def digest_session(
         )
 
         # 10. Update patterns (pass session type so topics can be split by origin)
-        update_patterns(config.state_dir, session_id, extracted, session_type=session_type)
+        update_patterns(
+            config.state_dir, session_id, extracted, session_type=session_type, digest_tags=tags
+        )
 
         # 11. Push to skgraph (FalkorDB) if available
         if graph is not None:
