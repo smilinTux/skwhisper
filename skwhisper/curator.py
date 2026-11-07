@@ -66,11 +66,14 @@ async def curate_context(config: Config) -> str:
         # STILL write whisper from the recency feed + patterns — resilience is the point
         # of splitting the relational (SQLite) and semantic (pg) layers.
         results: list[dict] = []
+        relevant_down: str | None = None
+        phase = "embed"
         if recent_text:
             try:
                 embed_text = recent_text[:1500]
                 log.info("Embedding recent context (%d chars)...", len(embed_text))
                 vector = await pgmem.embed(embed_text)
+                phase = "search"
                 log.info(
                     "Searching local pg (hybrid vec+BM25) for relevant memories..."
                 )
@@ -78,13 +81,17 @@ async def curate_context(config: Config) -> str:
                 log.info("Found %d relevant memories", len(results))
                 health.record(config.state_dir, "vector_read", True)
             except Exception as e:
+                relevant_down = _failure_cause(e, phase)
                 health.record(
-                    config.state_dir, "vector_read", False, f"semantic feed failed: {e}"
+                    config.state_dir,
+                    "vector_read",
+                    False,
+                    f"semantic feed failed: {relevant_down}",
                 )
                 log.warning(
                     "Semantic feed (skmem-pg) unavailable (%s), "
                     "whisper from recency + patterns only",
-                    e,
+                    relevant_down,
                 )
         else:
             log.info("No recent conversation context — semantic feed skipped")
@@ -99,6 +106,7 @@ async def curate_context(config: Config) -> str:
             recent_memories,
             sens_names,
             sens_ok,
+            relevant_down=relevant_down,
         )
         warn = health.banner(config.state_dir)
         if warn:
@@ -153,6 +161,47 @@ def _drop_sensitive_topics(
 
 def _drop_sensitive_questions(questions: list[dict], name_keys: set[str]) -> list[dict]:
     return [q for q in questions if not mentions(q["question"], name_keys)]
+
+
+_PG_AUTH_MARKERS = ("authentication failed", "password authentication")
+
+
+def _pg_auth_rejected(exc: BaseException) -> bool:
+    """libpq reports a rejected login as OperationalError with no sqlstate.
+
+    Match only; the message is never copied into output.
+    """
+    msg = str(exc).lower()
+    if any(m in msg for m in _PG_AUTH_MARKERS):
+        return True
+    return "role" in msg and "does not exist" in msg
+
+
+def _failure_cause(exc: BaseException, phase: str) -> str:
+    """Name the failed source by PHASE (embed or pg search), then by exception type.
+
+    Never includes the message, DSN, user or host.
+    """
+    mro = {f"{c.__module__.split('.')[0]}.{c.__name__}" for c in type(exc).__mro__}
+    if phase == "embed":
+        if "httpx.TimeoutException" in mro:
+            return "embedding service timed out"
+        if "httpx.HTTPStatusError" in mro:
+            return "embedding service returned an error"
+        if "httpx.TransportError" in mro or "httpx.RequestError" in mro:
+            return "embedding service unreachable"
+        return "embedding service failed"
+    if any(m.startswith("psycopg.") for m in mro):
+        state = str(getattr(exc, "sqlstate", "") or "")
+        if state.startswith("28"):  # invalid_authorization_specification, invalid_password
+            return "postgres auth failed"
+        if "psycopg.OperationalError" in mro and not state:
+            # connect phase: no sqlstate for refused, DNS, timeout AND for a rejected login
+            return "postgres auth failed" if _pg_auth_rejected(exc) else "postgres unreachable"
+        return "postgres query failed"
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return "postgres unreachable"
+    return "search failed"
 
 
 def _is_cron_session(path: Path) -> bool:
@@ -241,6 +290,7 @@ def _build_whisper(
     recent_memories: list[dict] | None = None,
     sensitive_names: set[str] | None = None,
     sensitive_ok: bool = True,
+    relevant_down: str | None = None,
 ) -> str:
     """Build the whisper.md content."""
     recent_memories = recent_memories or []
@@ -267,8 +317,18 @@ def _build_whisper(
                 lines.append(f"  {preview}")
         lines.append("")
 
-    # Relevant memories
-    if memory_results:
+    # Relevant memories. A failed source keeps its header and says why: a silently
+    # missing section reads as "nothing relevant" to the session that loads this file.
+    if relevant_down and not memory_results:
+        log.warning("Relevant Memories section: source unavailable (%s)", relevant_down)
+        lines.append("## Relevant Memories")
+        lines.append("")
+        lines.append(
+            f"_source unavailable: {relevant_down}. Not 'nothing relevant'; "
+            "Recent Memories above come from the local index._"
+        )
+        lines.append("")
+    elif memory_results:
         lines.append("## Relevant Memories")
         lines.append("")
         for r in memory_results[:10]:
