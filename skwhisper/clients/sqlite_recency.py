@@ -11,6 +11,7 @@ the `active_memories` view. This is the structured/recency half of memory:
 Both index the same flat-file source of truth. Decoupled by design — no skmemory
 import, read-only raw SQL — mirroring `pgmem.py`.
 """
+
 import logging
 import sqlite3
 from pathlib import Path
@@ -30,7 +31,9 @@ class SQLiteRecencyClient:
     def __init__(self, index_db: str | Path):
         self.index_db = Path(index_db)
 
-    def recent(self, limit: int = 8, tiers: tuple[str, ...] = DEFAULT_TIERS) -> list[dict]:
+    def recent(
+        self, limit: int = 8, tiers: tuple[str, ...] = DEFAULT_TIERS
+    ) -> list[dict]:
         """Return up to ``limit`` newest memories (created_at DESC) within ``tiers``.
 
         Rows with a sensitive tag (see ``skwhisper.sensitivity``) are never returned.
@@ -40,7 +43,9 @@ class SQLiteRecencyClient:
         best-effort enrichment, not a hard dependency.
         """
         if not self.index_db.exists():
-            log.info("SQLite index not found at %s — skipping recency feed", self.index_db)
+            log.info(
+                "SQLite index not found at %s — skipping recency feed", self.index_db
+            )
             return []
         placeholders = ",".join("?" for _ in tiers)
         try:
@@ -67,35 +72,45 @@ class SQLiteRecencyClient:
             finally:
                 conn.close()
         except sqlite3.Error as e:
-            log.warning("SQLite recency read failed (%s) — continuing without recency feed", e)
+            log.warning(
+                "SQLite recency read failed (%s) — continuing without recency feed", e
+            )
             return []
 
-    def sensitive_digest_refs(self) -> tuple[set[str], set[str]]:
-        """Return ``(session_ids, tags)`` taken from sensitive-tagged memories.
+    def sensitive_digest_refs(self) -> tuple[set[str], set[str], bool]:
+        """Return ``(session_ids, tags, ok)`` taken from sensitive-tagged memories.
 
         ``session_ids`` are the sessions behind sensitive digests (``source_ref``
-        ``session:<id>@a-b``). ``tags`` are every normalized tag on any sensitive
-        memory, so a person tag such as ``jane-doe`` on a sacred memory marks that
-        name sensitive. Returns empty sets (never raises) if the index is unreadable.
+        ``session:<id>@a-b``). ``tags`` are the raw tags of every sensitive memory,
+        so a person tag such as ``jane-doe`` on a sacred memory marks that name
+        sensitive. ``ok`` is False when the index is missing or unreadable: callers
+        must then fail CLOSED (omit digest-derived sections), never assume nothing
+        is sensitive.
         """
-        from ..sensitivity import normalize
-
         sessions: set[str] = set()
         tags: set[str] = set()
         if not self.index_db.exists():
-            return sessions, tags
+            log.warning(
+                "SQLite index not found at %s: sensitivity unknown", self.index_db
+            )
+            return sessions, tags, False
         try:
             conn = sqlite3.connect(f"file:{self.index_db}?mode=ro", uri=True, timeout=5)
             try:
-                for row_tags, ref in conn.execute("SELECT tags, source_ref FROM memories"):
+                for row_tags, ref in conn.execute(
+                    "SELECT tags, source_ref FROM memories"
+                ):
                     if not csv_is_sensitive(row_tags):
                         continue
-                    tags.update(n for n in (normalize(t) for t in str(row_tags).split(",")) if n)
+                    tags.update(
+                        t.strip() for t in str(row_tags).split(",") if t.strip()
+                    )
                     ref = str(ref or "")
                     if ref.startswith("session:"):
                         sessions.add(ref[len("session:") :].split("@", 1)[0])
             finally:
                 conn.close()
         except sqlite3.Error as e:
-            log.warning("SQLite sensitive scan failed (%s)", e)
-        return sessions, tags
+            log.warning("SQLite sensitive scan failed (%s): sensitivity unknown", e)
+            return set(), set(), False
+        return sessions, tags, True

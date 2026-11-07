@@ -2,6 +2,8 @@
 
 import asyncio
 import sqlite3
+
+import pytest
 from types import SimpleNamespace
 
 import skwhisper.curator as curator
@@ -56,6 +58,7 @@ def _curate(cfg, monkeypatch):
 
 def test_sensitive_digest_tags_keep_sacred_name_out_of_whisper(tmp_path, monkeypatch):
     cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [("sacred,quillan-marrowby", "")])
     sacred_tags = ["skwhisper", "auto-digest", "human", "sacred", "quillan-marrowby"]
     for sid in ("s1", "s2"):  # the sacred name mentioned in two sessions
         update_patterns(
@@ -127,6 +130,7 @@ def test_person_on_a_sensitive_memory_is_dropped_but_others_stay(tmp_path, monke
 
 def test_topic_or_question_with_a_sensitive_stem_is_dropped(tmp_path, monkeypatch):
     cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [("ops", "")])
     for sid in ("s1", "s2"):
         update_patterns(
             cfg.state_dir,
@@ -140,4 +144,102 @@ def test_topic_or_question_with_a_sensitive_stem_is_dropped(tmp_path, monkeypatc
     out = _curate(cfg, monkeypatch)
     assert (
         "grief" not in out.lower() and "medical" not in out.lower() and "builds" in out
+    )
+
+
+def test_possessive_first_name_and_unlisted_variants_are_dropped(tmp_path, monkeypatch):
+    cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [("sacred,quillan-marrowby", ""), ("ops", "")])
+    for sid in ("s1", "s2"):  # ordinary digests, no people entry for the sacred name
+        update_patterns(
+            cfg.state_dir,
+            sid,
+            {
+                "topics": [
+                    "quillan's birthday",
+                    "visiting quillan",
+                    "quillan marrowby anniversary",
+                    "annual planning",
+                ],
+                "questions": ["When is Quillans party?", "Is the annual review done?"],
+                "people": ["Dana Ortel"],
+            },
+            digest_tags=["skwhisper", "auto-digest"],
+        )
+    out = _curate(cfg, monkeypatch).lower()
+    assert "quillan" not in out and "marrowby" not in out
+    assert "annual planning" in out and "annual review" in out and "dana ortel" in out
+
+
+def test_short_name_does_not_drop_longer_words(tmp_path, monkeypatch):
+    cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [("sacred,ann-vell", "")])
+    update_patterns(
+        cfg.state_dir,
+        "s1",
+        {"topics": ["annual planning", "ann visit"]},
+        digest_tags=["x"],
+    )
+    update_patterns(
+        cfg.state_dir,
+        "s2",
+        {"topics": ["annual planning", "ann visit"]},
+        digest_tags=["x"],
+    )
+    out = _curate(cfg, monkeypatch)
+    assert "annual planning" in out and "ann visit" not in out
+
+
+def test_stored_patterns_are_purged(tmp_path, monkeypatch):
+    from skwhisper.patterns import load_patterns
+
+    cfg = _run(tmp_path, monkeypatch)
+    _index(cfg.memory_dir / "index.db", [("sacred,quillan-marrowby", "")])
+    update_patterns(
+        cfg.state_dir,
+        "s1",
+        {
+            "topics": ["quillan"],
+            "questions": ["Where is Quillan?"],
+            "people": ["Quillan Marrowby"],
+            "projects": ["Quillan memorial"],
+        },
+        digest_tags=["x"],
+    )
+    _curate(cfg, monkeypatch)
+    raw = str(load_patterns(cfg.state_dir)).lower()
+    assert "quillan" not in raw
+
+
+@pytest.mark.parametrize("breakage", ["missing", "corrupt", "no_table"])
+def test_unreadable_index_fails_closed(tmp_path, monkeypatch, caplog, breakage):
+    cfg = _run(tmp_path, monkeypatch)
+    db = cfg.memory_dir / "index.db"
+    if breakage == "corrupt":
+        db.write_bytes(b"not a sqlite file" * 100)
+    elif breakage == "no_table":
+        sqlite3.connect(db).close()
+    for sid in ("s1", "s2"):
+        update_patterns(
+            cfg.state_dir,
+            sid,
+            {
+                "topics": ["quillan memorial"],
+                "questions": ["Where is Quillan?"],
+                "people": ["Quillan Marrowby"],
+            },
+            digest_tags=["x"],
+        )
+    with caplog.at_level("WARNING"):
+        out = _curate(cfg, monkeypatch)
+    assert "quillan" not in out.lower()
+    for h in (
+        "Hot Topics (recurring)",
+        "Repeated Questions",
+        "Frequently Mentioned People",
+    ):
+        assert f"## {h}" in out
+    assert out.count("source unavailable") == 3
+    assert any(
+        "unreadable" in r.message or "unknown" in r.message for r in caplog.records
     )

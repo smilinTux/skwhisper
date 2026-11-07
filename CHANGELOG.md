@@ -8,7 +8,7 @@
   raises (SKMEM-P5-07).
 
 ### Fixed
-- whisper.md hot topics, repeated questions and people no longer come from sensitive session digests (SKMEM-P1-18). A digest whose tags carry a sensitive stem feeds no pattern counts and its people are remembered as sensitive; at curation time topics from sessions behind sensitive-tagged digests, and people, topics or questions matching a sensitive name or stem, are dropped.
+- whisper.md hot topics, repeated questions and people no longer come from sensitive session digests (SKMEM-P1-18). A digest tagged sensitive feeds no pattern counts. At curation time the sensitive name set is built from the person tags of sensitive memories (plus recorded sensitive people), matched per whole word with possessives and plurals stripped; matching topics, questions, people, projects and behaviors are dropped from output and purged from patterns.json, as are topics from sessions behind sensitive digests. If the sensitivity sources cannot be read the digest-derived sections fail closed to a `source unavailable` line.
 - whisper.md no longer selects sensitive memories. The SQLite recency feed and the pg hybrid search drop rows tagged sacred, grief, medical, family-private, private and the other skmemory sensitive stems (normalized: NFKD with marks and format controls dropped, look-alike letters folded, every dash, space, `_` and `.` stripped), and take the next candidate instead. `skwhisper/sensitivity.py` ports skmemory's helper; a parity test pins them.
 
 ### Added

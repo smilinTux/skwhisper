@@ -13,7 +13,8 @@ from .patterns import (
     get_repeated_questions,
     get_sensitive_people,
 )
-from .sensitivity import is_sensitive, normalize
+from .patterns import save_patterns
+from .sensitive_names import mentions, sensitive_name_keys
 from .watcher import extract_messages
 from .config import Config
 from . import health
@@ -49,12 +50,20 @@ async def curate_context(config: Config) -> str:
         # 4. Pattern data (from local state files — no pg dependency)
         hot_topics = get_hot_topics(config.state_dir, top_n=1000, session_type="human")
         repeated_qs = get_repeated_questions(config.state_dir, min_count=2)
-        sens_sessions, sens_tags = SQLiteRecencyClient(
+        sens_sessions, sens_tags, sens_ok = SQLiteRecencyClient(
             config.memory_dir / "index.db"
         ).sensitive_digest_refs()
-        sens_names = _sensitive_names(config, sens_tags)
-        hot_topics = _drop_sensitive_topics(hot_topics, sens_sessions, sens_names)[:10]
-        repeated_qs = _drop_sensitive_questions(repeated_qs, sens_names)
+        sens_names: set[str] = set()
+        if sens_ok:
+            sens_names = _sensitive_names(config, sens_tags)
+            _purge_patterns(config, sens_sessions, sens_names)
+            hot_topics = _drop_sensitive_topics(hot_topics, sens_sessions, sens_names)[:10]
+            repeated_qs = _drop_sensitive_questions(repeated_qs, sens_names)
+        else:
+            # Fail CLOSED: with the sensitivity sources unreadable, nothing
+            # digest-derived may reach whisper.md.
+            log.warning("Sensitivity sources unreadable: omitting digest-derived sections")
+            hot_topics, repeated_qs = [], []
 
         # 2–3. Semantic feed (skmem-pg). Best-effort: if pg/embed is unreachable we
         # STILL write whisper from the recency feed + patterns — resilience is the point
@@ -78,7 +87,7 @@ async def curate_context(config: Config) -> str:
 
         # 5. Build whisper (recency + semantic + patterns)
         whisper = _build_whisper(
-            config, results, hot_topics, repeated_qs, [], recent_memories, sens_names
+            config, results, hot_topics, repeated_qs, [], recent_memories, sens_names, sens_ok
         )
         warn = health.banner(config.state_dir)
         if warn:
@@ -96,37 +105,52 @@ async def curate_context(config: Config) -> str:
         await pgmem.close()
 
 
-def _name_keys(names) -> set[str]:
-    return {k for k in (normalize(n) for n in names) if len(k) >= 3}
-
-
 def _sensitive_names(config: Config, sens_tags: set[str]) -> set[str]:
-    """Normalized people names that must never reach whisper.md.
-
-    A name is sensitive when it was seen in a sensitive digest, or when it equals a
-    tag of any sensitive-tagged memory (digests tag people as ``first-last``).
-    """
-    people = load_patterns(config.state_dir).get("entities", {}).get("people", {})
-    names = set(get_sensitive_people(config.state_dir))
-    names.update(p for p in people if is_sensitive([p]) or normalize(p) in sens_tags)
-    return _name_keys(names)
+    """Whole-word name keys that must never reach whisper.md (see sensitive_names)."""
+    pat = load_patterns(config.state_dir)
+    people = pat.get("entities", {}).get("people", {})
+    return sensitive_name_keys(sens_tags, get_sensitive_people(config.state_dir), people)
 
 
-def _mentions(text: str, name_keys: set[str]) -> bool:
-    n = normalize(text)
-    return is_sensitive([text]) or any(k in n for k in name_keys)
+def _purge_patterns(config: Config, sessions: set[str], keys: set[str]) -> None:
+    """Remove already-stored sensitive entries from patterns.json (best effort)."""
+    pat = load_patterns(config.state_dir)
+    before = json.dumps(pat, sort_keys=True)
+    pat["topics"] = {
+        k: v
+        for k, v in pat.get("topics", {}).items()
+        if not (set(v.get("sessions", [])) & sessions) and not mentions(k, keys)
+    }
+    pat["questions"] = {
+        k: v
+        for k, v in pat.get("questions", {}).items()
+        if not mentions(v.get("text", k), keys) and not mentions(k, keys)
+    }
+    ents = pat.setdefault("entities", {})
+    for kind in ("people", "projects"):
+        ents[kind] = {n: c for n, c in ents.get(kind, {}).items() if not mentions(n, keys)}
+    pat["behaviors"] = {
+        k: v
+        for k, v in pat.get("behaviors", {}).items()
+        if not mentions(k, keys) and not mentions(v.get("note", "") if isinstance(v, dict) else "", keys)
+    }
+    if json.dumps(pat, sort_keys=True) != before:
+        try:
+            save_patterns(config.state_dir, pat)
+        except OSError as e:
+            log.warning("Could not purge sensitive patterns (%s)", e)
 
 
 def _drop_sensitive_topics(topics: list[dict], sessions: set[str], name_keys: set[str]) -> list[dict]:
     return [
         t
         for t in topics
-        if not (set(t.get("sessions", [])) & sessions) and not _mentions(t["topic"], name_keys)
+        if not (set(t.get("sessions", [])) & sessions) and not mentions(t["topic"], name_keys)
     ]
 
 
 def _drop_sensitive_questions(questions: list[dict], name_keys: set[str]) -> list[dict]:
-    return [q for q in questions if not _mentions(q["question"], name_keys)]
+    return [q for q in questions if not mentions(q["question"], name_keys)]
 
 
 def _is_cron_session(path: Path) -> bool:
@@ -208,6 +232,7 @@ def _build_whisper(
     suggestions: list[str],
     recent_memories: list[dict] | None = None,
     sensitive_names: set[str] | None = None,
+    sensitive_ok: bool = True,
 ) -> str:
     """Build the whisper.md content."""
     recent_memories = recent_memories or []
@@ -251,6 +276,12 @@ def _build_whisper(
                 lines.append(f"  _Tags: {tags}_")
             lines.append("")
 
+    unavailable = "_source unavailable: sensitivity index unreadable._"
+    if not sensitive_ok:
+        for header in ("Hot Topics (recurring)", "Repeated Questions", "Frequently Mentioned People"):
+            lines += [f"## {header}", "", unavailable, ""]
+        hot_topics, repeated_questions = [], []
+
     # Recurring patterns
     if hot_topics:
         lines.append("## Hot Topics (recurring)")
@@ -272,10 +303,9 @@ def _build_whisper(
     people = {
         n: c
         for n, c in patterns.get("entities", {}).get("people", {}).items()
-        if not _mentions(n, sensitive_names or set())
-        and normalize(n) not in (sensitive_names or set())
+        if not mentions(n, sensitive_names or set())
     }
-    if people:
+    if people and sensitive_ok:
         top_people = sorted(people.items(), key=lambda x: x[1], reverse=True)[:10]
         lines.append("## Frequently Mentioned People")
         lines.append("")
