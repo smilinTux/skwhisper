@@ -4,7 +4,7 @@ from pathlib import Path
 import tomllib
 import os
 
-from .pgdsn import resolve_dsn, DSNUnavailable
+from .pgdsn import resolve_dsn
 
 # Resolve active agent from env. SKAGENT is the primary source of truth
 # (matches skmemory). SKCAPSTONE_AGENT kept for backward compatibility.
