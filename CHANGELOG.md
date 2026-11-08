@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-08
+
 ### Removed
 - ChromaDB and Qdrant clients (`clients/chroma.py`, `clients/qdrant.py`) and
   their config keys. pgvector is the only vector backend; requesting another
