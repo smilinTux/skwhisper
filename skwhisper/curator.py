@@ -193,11 +193,17 @@ def _failure_cause(exc: BaseException, phase: str) -> str:
         return "embedding service failed"
     if any(m.startswith("psycopg.") for m in mro):
         state = str(getattr(exc, "sqlstate", "") or "")
-        if state.startswith("28"):  # invalid_authorization_specification, invalid_password
+        if state.startswith(
+            "28"
+        ):  # invalid_authorization_specification, invalid_password
             return "postgres auth failed"
         if "psycopg.OperationalError" in mro and not state:
             # connect phase: no sqlstate for refused, DNS, timeout AND for a rejected login
-            return "postgres auth failed" if _pg_auth_rejected(exc) else "postgres unreachable"
+            return (
+                "postgres auth failed"
+                if _pg_auth_rejected(exc)
+                else "postgres unreachable"
+            )
         return "postgres query failed"
     if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
         return "postgres unreachable"
@@ -241,12 +247,16 @@ def _is_cron_session(path: Path) -> bool:
 def _get_recent_context(config: Config) -> str:
     """Extract text from the most recent active sessions, prioritizing human-driven ones."""
     sessions_dir = config.sessions_dir
-    # Get most recent active .jsonl files by mtime
-    active = sorted(
-        sessions_dir.glob("*.jsonl"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    # Get most recent active .jsonl files by mtime. Session dirs are symlink
+    # farms; a link whose transcript was pruned dangles, and one unreadable
+    # entry must never abort curation, so skip anything that cannot be stat'd.
+    stamped = []
+    for p in sessions_dir.glob("*.jsonl"):
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    active = [p for _, p in sorted(stamped, key=lambda t: t[0], reverse=True)]
 
     # Separate human-driven sessions from cron/automated sessions
     human_sessions = []
