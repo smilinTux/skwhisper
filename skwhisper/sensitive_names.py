@@ -5,7 +5,8 @@ patterns.json person whose name tokens are a subset or superset of a sensitive
 memory's tag parts (digests tag people as ``first-last``). Each name token of 3+
 chars is matched on whole-word boundaries after stripping possessives and plurals,
 so "Quillan's birthday" matches Quillan Marrowby while "annual planning" does not
-match "Ann".
+match "Ann". Role and self words (the, user, chef, queen, lumina) are never name
+keys, but relation words (wife, mother, late) are kept so they still hide.
 """
 
 from __future__ import annotations
@@ -37,11 +38,20 @@ def tokens(text: object) -> set[str]:
     return out
 
 
+# Role, self and function words that digests list as "people": keys from them would hide every topic.
+_STOP_WORDS = frozenset(
+    tokens(
+        "the a an and this that his her our your their she him they "
+        "user assistant agent bot chef king queen lumina opus jarvis ava claude"
+    )
+)
+
+
 def name_keys(names) -> set[str]:
-    """Token keys (3+ chars) for every name string."""
+    """Token keys (3+ chars) for every name string, minus the stoplist."""
     keys: set[str] = set()
     for n in names:
-        keys.update(k for k in tokens(n) if len(k) >= 3)
+        keys.update(k for k in tokens(n) if len(k) >= 3 and k not in _STOP_WORDS)
     return keys
 
 
