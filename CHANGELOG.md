@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-08
+
+### Fixed
+- A dangling session symlink (a pruned Claude Code subagent transcript) no longer aborts every daemon cycle with FileNotFoundError in `_get_recent_context`; unreadable session entries are skipped. On chiap02, chiap03 and chiap08 this had kept whisper.md stale for about 6 days.
+
 ### Removed
 - ChromaDB and Qdrant clients (`clients/chroma.py`, `clients/qdrant.py`) and
   their config keys. pgvector is the only vector backend; requesting another
