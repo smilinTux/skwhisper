@@ -315,7 +315,11 @@ After=network.target
 [Service]
 Type=simple
 ExecStart={skwhisper_bin} daemon
+# All three selectors, so a node-wide SKAGENT from environment.d cannot
+# turn skwhisper@aster into a second jarvis daemon (chi, 2026-11-09).
+Environment=SKAGENT=%i
 Environment=SKCAPSTONE_AGENT=%i
+Environment=SKMEMORY_AGENT=%i
 Environment=HOME={home}
 Restart=on-failure
 RestartSec=30

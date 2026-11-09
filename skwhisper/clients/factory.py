@@ -51,6 +51,11 @@ def make_graph_writer(config):
         writer = AGEGraphWriter.from_config(config)
         if writer is None:
             _mark(config, "graph", False, "AGE graph unavailable, graph writes are skipped")
+        else:
+            # Record the recovery too. Only a graph WRITE used to clear the flag,
+            # so a boot race (skwhisper up before skmem-pg) left "GRAPH DEGRADED"
+            # in whisper.md until the next digest (chi reboot, 2026-11-09).
+            _mark(config, "graph", True)
         return writer
 
     if backend == "falkordb":
