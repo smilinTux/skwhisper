@@ -184,6 +184,8 @@ async def digest_session(
                 "source": "skwhisper",
                 "session_id": session_id,
                 "session_type": session_type,
+                # The exact flat-file record, so pg holds the same memory.
+                "memory_json": getattr(memory, "last_snapshot", None),
             },
             mem_id,
         )

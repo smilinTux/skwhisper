@@ -16,6 +16,10 @@ class SKMemoryWriter:
         self.memory_dir = Path(memory_dir)
         self.short_term = self.memory_dir / "short-term"
         self.short_term.mkdir(parents=True, exist_ok=True)
+        # The exact record the last write_snapshot() put on disk. The daemon
+        # sends it to pg as memory_json so the pg row is the same memory as the
+        # flat file, id included, not a second shape of it.
+        self.last_snapshot: dict | None = None
 
     def write_snapshot(
         self,
@@ -70,5 +74,6 @@ class SKMemoryWriter:
 
         filepath = self.short_term / f"{mem_id}.json"
         filepath.write_text(json.dumps(snapshot, indent=2))
+        self.last_snapshot = snapshot
         log.info("Wrote memory snapshot: %s -> %s", title[:60], filepath.name)
         return mem_id
