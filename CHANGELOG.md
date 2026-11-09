@@ -10,6 +10,10 @@
   sets it node-wide, so on chi `skwhisper@aster` ran as a second jarvis daemon
   on jarvis's state dir, and aster's whisper.md went stale. The unit now pins
   `SKAGENT`, `SKCAPSTONE_AGENT` and `SKMEMORY_AGENT` to the instance.
+- "GRAPH DEGRADED" stuck in whisper.md after a boot race: the graph writer
+  recorded AGE being unreachable (skwhisper up before skmem-pg) but never its
+  recovery, which only a graph write cleared. It now clears as soon as the
+  graph connects again.
 
 ## [0.6.6] - 2026-11-09
 
