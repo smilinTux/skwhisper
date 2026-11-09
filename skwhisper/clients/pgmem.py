@@ -129,6 +129,16 @@ class PGMemClient:
     def _upsert_sync(self, vector: list[float], payload: dict, point_id: str | None) -> bool:
         pid = point_id or str(uuid.uuid4())
         now = datetime.now(timezone.utc)
+        # memory_json is what skmemory parses back into a Memory. It used to be
+        # this digest payload (tier/session_type, no id), and on conflict it
+        # overwrote skmemory's canonical record for the same id. Every read then
+        # minted a fresh random id for the row, so one memory surfaced as an
+        # untraceable duplicate that recall could not find (nor, 2026-11-09:
+        # 347 lumina + 213 opus rows). Store the canonical record when given,
+        # and never a record without the row's id.
+        payload = dict(payload)
+        record = payload.pop("memory_json", None) or dict(payload)
+        record["id"] = pid
         tags = payload.get("tags") or []
         sql = (
             "INSERT INTO memories "
@@ -152,7 +162,7 @@ class PGMemClient:
                     tags,
                     payload.get("source", "skwhisper"),
                     now, now,
-                    json.dumps(payload),
+                    json.dumps(record),
                     self._vec_literal(vector),
                     self.agent,
                 ))

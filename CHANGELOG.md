@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-11-09
+
+### Fixed
+- The digest's pg row stored the digest payload (tier, session_type, no id) as
+  `memory_json`, and on conflict overwrote skmemory's canonical record for the
+  same id. skmemory parses `memory_json` back into a Memory, so every read gave
+  the row a fresh random id: one memory showed up in search as an extra copy
+  that `recall` could not find (nor: 347 lumina and 213 opus rows). The row now
+  stores the exact flat-file record, and never a record without the row's id.
+
 ## [0.6.5] - 2026-11-08
 
 ### Fixed
