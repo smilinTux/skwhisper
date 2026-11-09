@@ -7,7 +7,11 @@ Type=simple
 # %i = agent name (e.g. jarvis, aster, lumina)
 # %h = user home directory (resolved by systemd)
 ExecStart=%h/.local/bin/skwhisper daemon
+# All three selectors, so a node-wide SKAGENT from environment.d cannot
+# turn skwhisper@aster into a second jarvis daemon (chi, 2026-11-09).
+Environment=SKAGENT=%i
 Environment=SKCAPSTONE_AGENT=%i
+Environment=SKMEMORY_AGENT=%i
 Environment=HOME=%h
 Restart=on-failure
 RestartSec=30
