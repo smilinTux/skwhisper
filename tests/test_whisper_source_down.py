@@ -150,3 +150,39 @@ def test_no_context_is_not_reported_as_down(tmp_path, monkeypatch):
     monkeypatch.setattr(curator, "make_vector_client", lambda c: _Ok(None))
     monkeypatch.setattr(curator, "_get_recent_context", lambda c: "")
     assert "source unavailable" not in asyncio.run(curator.curate_context(cfg))
+
+
+def _whisper_stat(cfg):
+    p = cfg.state_dir / "whisper.md"
+    st = p.stat()
+    return st.st_ino, st.st_mtime_ns
+
+
+def test_identical_inputs_do_not_rewrite_whisper(tmp_path, monkeypatch):
+    """A second curate with the same inputs leaves whisper.md untouched (inode and mtime)."""
+    import time
+
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    before = _whisper_stat(cfg)
+    time.sleep(1.1)  # the header timestamp has one second resolution
+    _curate(cfg, _Ok(None), monkeypatch)
+    assert _whisper_stat(cfg) == before
+
+
+def test_changed_inputs_rewrite_whisper(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    before = (cfg.state_dir / "whisper.md").read_text()
+    monkeypatch.setattr(curator, "make_vector_client", lambda c: _Down(RuntimeError("x")))
+    out = asyncio.run(curator.curate_context(cfg))
+    assert out != before
+    assert (cfg.state_dir / "whisper.md").read_text() == out
+
+
+def test_missing_whisper_is_written(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    (cfg.state_dir / "whisper.md").unlink()
+    out = _curate(cfg, _Ok(None), monkeypatch)
+    assert (cfg.state_dir / "whisper.md").read_text() == out

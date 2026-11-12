@@ -359,3 +359,18 @@ if __name__ == "__main__":
     test_classify_session_no_false_positive()
     test_patterns_session_type_tracking()
     print("\n✅ All tests passed!")
+
+
+def test_mark_digested_stores_usage_only_as_counts(tmp_path):
+    from skwhisper.config import Config
+    from skwhisper.watcher import mark_digested, load_state
+
+    cfg_file = tmp_path / "c.toml"
+    cfg_file.write_text(f'[a]\nsessions_dir = "{tmp_path}"\nstate_dir = "{tmp_path / "st"}"\n')
+    config = Config(cfg_file)
+    usage = {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    mark_digested(config, "s1", 10, usage=usage)
+    mark_digested(config, "s2", 10)
+    sessions = load_state(config.state_dir)["sessions"]
+    assert sessions["s1"]["usage"] == usage
+    assert "usage" not in sessions["s2"]

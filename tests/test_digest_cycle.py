@@ -44,3 +44,27 @@ def test_cycle_newest_first_and_capped(tmp_path, monkeypatch):
 
     assert asyncio.run(daemon.run_digest_cycle(Cfg())) == 3
     assert seen == ["s4", "s3", "s2"]
+
+
+def test_digest_session_records_usage_on_state_entry(tmp_path):
+    """A fake completion with a usage block lands as counts on the session entry in state.json."""
+    import json
+    import httpx
+    from types import SimpleNamespace
+    from skwhisper.clients.ollama import OllamaClient
+    from skwhisper.watcher import mark_digested
+
+    def h(req):
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 5, "total_tokens": 16},
+        })
+
+    ollama = OllamaClient("http://e", "m", "s", summarize_url="http://s", summarize_api="openai")
+    ollama._client = httpx.AsyncClient(transport=httpx.MockTransport(h))
+    asyncio.run(ollama.extract_topics("x"))
+    (tmp_path / "st").mkdir()
+    cfg = SimpleNamespace(state_dir=tmp_path / "st")
+    mark_digested(cfg, "sess1", 5, usage=ollama.take_usage())
+    entry = json.loads((tmp_path / "st" / "state.json").read_text())["sessions"]["sess1"]
+    assert entry["usage"] == {"prompt_tokens": 11, "completion_tokens": 5, "total_tokens": 16}

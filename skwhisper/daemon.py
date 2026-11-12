@@ -113,7 +113,8 @@ async def digest_session(
         if is_non_digest(summary):
             # Refusals stay marked so a later pass with another model can find them.
             log.warning("Summarizer refused or found nothing for session %s, not storing", session_id[:12])
-            mark_digested(config, session_id, session["new_offset"], session_type="refusal-skipped")
+            mark_digested(config, session_id, session["new_offset"], session_type="refusal-skipped",
+                          usage=getattr(ollama, "take_usage", lambda: None)())
             return True
 
         # 3b. Ground relative dates against when the conversation happened.
@@ -209,7 +210,8 @@ async def digest_session(
             )
 
         # 12. Mark as digested (store classification for status reporting)
-        mark_digested(config, session_id, session["new_offset"], session_type=session_type)
+        mark_digested(config, session_id, session["new_offset"], session_type=session_type,
+                      usage=getattr(ollama, "take_usage", lambda: None)())
 
         log.info("✓ Digested session %s: '%s'", session_id[:12], title)
         return True

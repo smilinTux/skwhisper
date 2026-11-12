@@ -323,8 +323,9 @@ def format_messages_for_summary(messages: list[dict], max_chars: int = 15000, us
     return "\n\n".join(lines)
 
 
-def mark_digested(config: Config, session_id: str, offset: int, session_type: str = "human"):
-    """Mark a session as fully digested in state."""
+def mark_digested(config: Config, session_id: str, offset: int, session_type: str = "human",
+                  usage: dict | None = None):
+    """Mark a session as fully digested in state. usage: token counts only, one field."""
     state = load_state(config.state_dir)
     if "sessions" not in state:
         state["sessions"] = {}
@@ -334,4 +335,6 @@ def mark_digested(config: Config, session_id: str, offset: int, session_type: st
         "session_type": session_type,
         "digested_at": datetime.now(timezone.utc).isoformat(),
     }
+    if usage:
+        state["sessions"][session_id]["usage"] = usage
     save_state(config.state_dir, state)
