@@ -81,6 +81,11 @@ async def digest_session(
     messages = session["messages"]
     log.info("Digesting session %s (%d messages)...", session_id[:12], len(messages))
 
+    # Usage is per-client state shared across sessions. Drop whatever an earlier
+    # session left behind (failed or skipped paths never drain it) so this entry
+    # records only its own completions.
+    getattr(ollama, "take_usage", lambda: None)()
+
     try:
         # 1. Classify session before processing
         session_type = classify_session(messages, session.get("path"))
