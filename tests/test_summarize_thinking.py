@@ -63,3 +63,34 @@ def test_transcript_is_fenced():
     asyncio.run(_client(h, summarize_thinking=False).summarize("Chef: what is SK status?"))
     user = bodies[0]["messages"][-1]["content"]
     assert "<transcript>\nChef: what is SK status?\n</transcript>" in user
+
+
+def test_usage_recorded_and_taken_once():
+    """Token counts from completions accumulate; take_usage returns and resets them."""
+    def h(req):
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+        })
+
+    c = _client(h)
+    asyncio.run(c.extract_topics("x"))
+    asyncio.run(c.extract_topics("x"))
+    assert c.take_usage() == {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28}
+    assert c.take_usage() is None
+
+
+def test_usage_absent_is_none():
+    c = _client(lambda req: _ok("{}"))
+    asyncio.run(c.extract_topics("x"))
+    assert c.take_usage() is None
+
+
+def test_usage_ollama_shape():
+    def h(req):
+        return httpx.Response(200, json={"response": "{}", "prompt_eval_count": 7, "eval_count": 3})
+
+    c = OllamaClient("http://e", "m", "s", summarize_url="http://s", summarize_api="ollama")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(h))
+    asyncio.run(c.extract_topics("x"))
+    assert c.take_usage() == {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}

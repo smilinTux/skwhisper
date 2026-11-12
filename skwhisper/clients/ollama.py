@@ -27,6 +27,26 @@ class OllamaClient:
         # server to skip thinking (llama.cpp/vLLM chat_template_kwargs, Ollama think).
         self.summarize_thinking = summarize_thinking
         self._client: httpx.AsyncClient | None = None
+        # Token counts only (never text), summed over completions since the last take_usage().
+        self._usage: dict | None = None
+
+    def _record_usage(self, prompt: int | None, completion: int | None, total: int | None = None) -> None:
+        if not isinstance(prompt, int) and not isinstance(completion, int):
+            return
+        prompt = prompt if isinstance(prompt, int) else 0
+        completion = completion if isinstance(completion, int) else 0
+        if not isinstance(total, int):
+            total = prompt + completion
+        u = self._usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        u["prompt_tokens"] += prompt
+        u["completion_tokens"] += completion
+        u["total_tokens"] += total
+        self._usage = u
+
+    def take_usage(self) -> dict | None:
+        """Return the token counts summed since the last call, and reset. None if the backend sent none."""
+        u, self._usage = self._usage, None
+        return u
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -59,7 +79,10 @@ class OllamaClient:
                 body.pop("chat_template_kwargs")
                 resp = await client.post(url, json=body)
             resp.raise_for_status()
-            msg = (resp.json().get("choices") or [{}])[0].get("message", {}) or {}
+            data = resp.json()
+            usage = data.get("usage") or {}
+            self._record_usage(usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"))
+            msg = (data.get("choices") or [{}])[0].get("message", {}) or {}
             return (msg.get("content") or msg.get("reasoning_content") or "").strip()
         # Legacy Ollama /api/generate
         payload = {"model": self.summarize_model, "prompt": user_content,
@@ -72,6 +95,7 @@ class OllamaClient:
         resp = await client.post(f"{self.summarize_url}/api/generate", json=payload)
         resp.raise_for_status()
         data = resp.json()
+        self._record_usage(data.get("prompt_eval_count"), data.get("eval_count"))
         return (data.get("response") or data.get("thinking") or "").strip()
 
     async def embed(self, text: str) -> list[float]:

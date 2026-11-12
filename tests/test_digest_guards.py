@@ -50,7 +50,7 @@ def _run(monkeypatch, messages, summary):
     marked = []
     stored = []
     monkeypatch.setattr(daemon, "classify_session", lambda m, p: "human")
-    monkeypatch.setattr(daemon, "mark_digested", lambda c, sid, off, session_type="human": marked.append(session_type))
+    monkeypatch.setattr(daemon, "mark_digested", lambda c, sid, off, session_type="human", usage=None: marked.append(session_type))
 
     class Oll:
         async def summarize(self, text):

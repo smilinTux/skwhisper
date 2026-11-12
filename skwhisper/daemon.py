@@ -81,6 +81,11 @@ async def digest_session(
     messages = session["messages"]
     log.info("Digesting session %s (%d messages)...", session_id[:12], len(messages))
 
+    # Usage is per-client state shared across sessions. Drop whatever an earlier
+    # session left behind (failed or skipped paths never drain it) so this entry
+    # records only its own completions.
+    getattr(ollama, "take_usage", lambda: None)()
+
     try:
         # 1. Classify session before processing
         session_type = classify_session(messages, session.get("path"))
@@ -113,7 +118,8 @@ async def digest_session(
         if is_non_digest(summary):
             # Refusals stay marked so a later pass with another model can find them.
             log.warning("Summarizer refused or found nothing for session %s, not storing", session_id[:12])
-            mark_digested(config, session_id, session["new_offset"], session_type="refusal-skipped")
+            mark_digested(config, session_id, session["new_offset"], session_type="refusal-skipped",
+                          usage=getattr(ollama, "take_usage", lambda: None)())
             return True
 
         # 3b. Ground relative dates against when the conversation happened.
@@ -209,7 +215,8 @@ async def digest_session(
             )
 
         # 12. Mark as digested (store classification for status reporting)
-        mark_digested(config, session_id, session["new_offset"], session_type=session_type)
+        mark_digested(config, session_id, session["new_offset"], session_type=session_type,
+                      usage=getattr(ollama, "take_usage", lambda: None)())
 
         log.info("✓ Digested session %s: '%s'", session_id[:12], title)
         return True

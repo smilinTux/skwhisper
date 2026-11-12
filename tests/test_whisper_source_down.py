@@ -150,3 +150,60 @@ def test_no_context_is_not_reported_as_down(tmp_path, monkeypatch):
     monkeypatch.setattr(curator, "make_vector_client", lambda c: _Ok(None))
     monkeypatch.setattr(curator, "_get_recent_context", lambda c: "")
     assert "source unavailable" not in asyncio.run(curator.curate_context(cfg))
+
+
+def _whisper_stat(cfg):
+    p = cfg.state_dir / "whisper.md"
+    st = p.stat()
+    return st.st_ino, st.st_mtime_ns
+
+
+def test_identical_inputs_do_not_rewrite_whisper(tmp_path, monkeypatch):
+    """A second curate with the same inputs leaves whisper.md untouched (inode and mtime)."""
+    from datetime import datetime, timedelta, timezone
+
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    before = _whisper_stat(cfg)
+
+    class _Later(datetime):
+        @classmethod
+        def now(cls, tz=None):  # the header timestamp moves, as it does on a real tick
+            return datetime.now(timezone.utc) + timedelta(minutes=30)
+
+    monkeypatch.setattr(curator, "datetime", _Later)
+    _curate(cfg, _Ok(None), monkeypatch)
+    assert _whisper_stat(cfg) == before
+
+
+def test_changed_inputs_rewrite_whisper(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    before = (cfg.state_dir / "whisper.md").read_text()
+    monkeypatch.setattr(curator, "make_vector_client", lambda c: _Down(RuntimeError("x")))
+    out = asyncio.run(curator.curate_context(cfg))
+    assert out != before
+    assert (cfg.state_dir / "whisper.md").read_text() == out
+
+
+def test_missing_whisper_is_written(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    (cfg.state_dir / "whisper.md").unlink()
+    out = _curate(cfg, _Ok(None), monkeypatch)
+    assert (cfg.state_dir / "whisper.md").read_text() == out
+
+
+def test_non_utf8_whisper_is_rewritten(tmp_path, monkeypatch):
+    """A corrupt (non UTF-8) whisper.md is treated as changed and healed, not a permanent failure."""
+    cfg = _cfg(tmp_path)
+    _curate(cfg, _Ok(None), monkeypatch)
+    p = cfg.state_dir / "whisper.md"
+    p.write_bytes(b"\xff\xfe\x00 not utf8 \xc3\x28")
+    out = _curate(cfg, _Ok(None), monkeypatch)
+    assert p.read_text() == out
+
+
+def test_body_keeps_first_line_without_header():
+    assert curator._body("keep me\nbody") == "keep me\nbody"
+    assert curator._body("# SKWhisper Context - t\nbody") == "body"
